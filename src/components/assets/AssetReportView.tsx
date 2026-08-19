@@ -99,16 +99,21 @@ function AssetReport() {
   const primaryCompanies = companies.filter(c => c.parentId === null);
 
   return (
-    <div className="p-6 md:p-8 max-w-7xl mx-auto animate-in fade-in duration-500 bg-slate-50 min-h-screen">
-      <div className="mb-8 rounded-2xl bg-gradient-to-r from-blue-900 to-indigo-800 p-8 text-white shadow-lg">
-        <h2 className="text-3xl font-black flex items-center tracking-tight">
-          <BiBarChartAlt2 className="mr-3 text-4xl text-blue-300" /> Asset Report
-        </h2>
-        <p className="mt-2 text-blue-100 font-medium">รายงานทะเบียนทรัพย์สิน — สรุปตามประเภท และรายละเอียดรายตัว</p>
+    // ⚠️ padding/พื้นหลัง ปล่อยให้ layout ที่ครอบอยู่จัดการ (ดูหมายเหตุใน AssetRegisterView)
+    <div className="mx-auto max-w-7xl animate-in fade-in duration-500">
+      {/* 🎨 หัวหน้าจอแบบเบา (ดูหมายเหตุใน AssetRegisterView) */}
+      <div className="mb-6 flex items-center gap-3 border-b border-slate-200 pb-5">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+          <BiBarChartAlt2 className="text-2xl" />
+        </div>
+        <div>
+          <h2 className="text-xl font-black tracking-tight text-slate-800">Asset Report</h2>
+          <p className="text-sm text-slate-500">รายงานทะเบียนทรัพย์สิน — สรุปตามประเภท และรายละเอียดรายตัว</p>
+        </div>
       </div>
 
       {/* Filter panel */}
-      <div className="bg-white rounded-2xl shadow-md border border-slate-200 p-5 mb-6 flex flex-wrap items-end gap-4">
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 mb-6 flex flex-wrap items-end gap-4">
         <div className="flex-1 min-w-[220px]">
           <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500">บริษัท</label>
           <select value={companyId} onChange={e => setCompanyId(e.target.value)} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-bold text-slate-700 outline-none focus:ring-blue-50 focus:border-blue-500">

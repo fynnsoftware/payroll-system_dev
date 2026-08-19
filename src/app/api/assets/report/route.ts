@@ -9,8 +9,10 @@
 // ให้อัตโนมัติก่อนคำนวณ (ensureAssetYearsClosed) — งวดบัญชียึด 1 ม.ค. - 31 ธ.ค. เสมอทุกบริษัท
 import { NextResponse, NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getToken } from "next-auth/jwt";
 import { calcAssetDepreciation, getFiscalPeriod, DEFAULT_CALC_RULES, CalcRule } from "@/lib/depreciation";
 import { ensureAssetYearsClosed, getFrozenBFForYear } from "@/lib/assetYearClose";
+import { getAllowedCompanyIds, isCompanyAllowed } from "@/lib/companyScope";
 
 export async function GET(request: NextRequest) {
   try {
@@ -23,6 +25,19 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "กรุณาระบุบริษัท" }, { status: 400 });
     }
 
+    // 🔒 [security_asset] ต้องล็อกอิน และขอรายงานได้เฉพาะบริษัทในขอบเขตของตัวเอง
+    const token = await getToken({ req: request });
+    if (!token) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    const allowedCompanyIds = await getAllowedCompanyIds(token);
+    if (!isCompanyAllowed(allowedCompanyIds, Number(companyId))) {
+      return NextResponse.json(
+        { error: "Access Denied: ไม่มีสิทธิ์ดูรายงานของบริษัทนี้" },
+        { status: 403 },
+      );
+    }
+
     const company = await prisma.company.findUnique({ where: { id: Number(companyId) } });
     if (!company) return NextResponse.json({ error: "ไม่พบบริษัทนี้" }, { status: 404 });
 
@@ -33,6 +48,10 @@ export async function GET(request: NextRequest) {
     if (includeSubCompanies) {
       const subs = await prisma.company.findMany({ where: { parentId: company.id }, select: { id: true } });
       companyIds = [...companyIds, ...subs.map((c) => c.id)];
+    }
+    // ตัดบริษัทลูกที่อยู่นอกขอบเขตออก (เช่น user อยู่บริษัทลูก ไม่ควรเห็นพี่น้องบริษัทเดียวกัน)
+    if (allowedCompanyIds !== null) {
+      companyIds = companyIds.filter((id) => allowedCompanyIds.includes(id));
     }
 
     const assets = await prisma.asset.findMany({

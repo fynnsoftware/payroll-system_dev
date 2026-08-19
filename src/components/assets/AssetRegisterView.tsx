@@ -33,6 +33,14 @@ interface Asset {
   currentNbv?: number;
 }
 
+// 🌟 อายุการใช้งานมาตรฐาน -> อัตราค่าเสื่อมต่อปี (เส้นตรง) = 100 / จำนวนปี
+// 3 ปีใช้ 33.33% ตามธรรมเนียมบัญชีไทย (ไม่ใช้ 33.3333... เพื่อให้ตัวเลขในรายงานอ่านง่ายและตรงกับ Excel ต้นฉบับ)
+const DEPRECIATION_PRESETS = [
+  { years: 3, percent: 33.33 },
+  { years: 5, percent: 20 },
+  { years: 20, percent: 5 },
+];
+
 const emptyForm = {
   assetCode: '',
   companyId: '',
@@ -67,6 +75,19 @@ function AssetRegister() {
   const [isSaving, setIsSaving] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formData, setFormData] = useState(emptyForm);
+  // 🌟 โหมดการกรอกอัตราค่าเสื่อม: '' = ยังไม่เลือก, '3'/'5'/'10' = เลือกจากอายุการใช้งาน, 'CUSTOM' = ระบุ % เอง
+  const [rateMode, setRateMode] = useState('');
+
+  const handleRateModeChange = (mode: string) => {
+    setRateMode(mode);
+    const preset = DEPRECIATION_PRESETS.find(p => String(p.years) === mode);
+    if (preset) {
+      setFormData({ ...formData, depreciationRatePercent: String(preset.percent) });
+    } else if (mode === '') {
+      setFormData({ ...formData, depreciationRatePercent: '' });
+    }
+    // mode === 'CUSTOM' -> คงค่าเดิมไว้ให้ผู้ใช้แก้เอง
+  };
 
   const fetchAll = async (searchTerm?: string) => {
     setIsLoading(true);
@@ -110,9 +131,15 @@ function AssetRegister() {
         openingAccumDepr: asset.openingAccumDepr != null ? String(asset.openingAccumDepr) : '',
         openingAsOfDate: asset.openingAsOfDate ? asset.openingAsOfDate.slice(0, 10) : '',
       });
+
+      // 🌟 ถ้าอัตราตรงกับ preset ให้เลือก preset นั้น ไม่ตรงถือว่าเป็นค่าที่กรอกเอง
+      const pct = Number(asset.depreciationRate) * 100;
+      const matched = DEPRECIATION_PRESETS.find(p => Math.abs(p.percent - pct) < 0.005);
+      setRateMode(matched ? String(matched.years) : 'CUSTOM');
     } else {
       setEditingId(null);
       setFormData(emptyForm);
+      setRateMode('');
     }
     setIsModalOpen(true);
   };
@@ -130,6 +157,13 @@ function AssetRegister() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (modalMode === 'PREVIEW') return;
+
+    // 🌟 กันเคสเลือก "กำหนดเอง" แล้วปล่อยช่อง % ว่างไว้
+    if (!Number(formData.depreciationRatePercent)) {
+      showToast('กรุณาระบุอายุการใช้งาน หรืออัตราค่าเสื่อมราคาต่อปี', 'error');
+      return;
+    }
+
     setIsSaving(true);
 
     const url = modalMode === 'EDIT' ? `/api/assets/${editingId}` : '/api/assets';
@@ -206,22 +240,29 @@ function AssetRegister() {
   };
 
   return (
-    <div className="p-6 md:p-8 max-w-7xl mx-auto animate-in fade-in duration-500 bg-slate-50 min-h-screen">
+    // ⚠️ ไม่ใส่ padding/พื้นหลัง/min-h-screen ที่นี่ เพราะ layout ที่ครอบอยู่ (ทั้งฝั่ง admin และ /asset)
+    // จัดการให้แล้ว ถ้าใส่ซ้ำจะเกิด padding ซ้อนและพื้นหลังไม่ตรงกับธีมของแต่ละฝั่ง
+    <div className="mx-auto max-w-7xl animate-in fade-in duration-500">
 
-      <div className="mb-8 rounded-2xl bg-gradient-to-r from-blue-900 to-indigo-800 p-8 text-white shadow-lg flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <h2 className="text-3xl font-black flex items-center tracking-tight">
-            <BiPackage className="mr-3 text-4xl text-blue-300" /> Asset Register
-          </h2>
-          <p className="mt-2 text-blue-100 font-medium">ทะเบียนทรัพย์สิน — บันทึก แก้ไข ค้นหา และคำนวณค่าเสื่อมราคา</p>
+      {/* 🎨 หัวหน้าจอแบบเบา ไม่ใช้แถบ gradient ก้อนใหญ่ เพราะการ์ดโปรไฟล์ด้านบนเป็นสีเข้มอยู่แล้ว
+          ถ้าใส่สองก้อนซ้อนกันจะแย่งสายตาและกินพื้นที่เนื้อหาจริงมากเกินไป */}
+      <div className="mb-6 flex flex-col gap-4 border-b border-slate-200 pb-5 md:flex-row md:items-center md:justify-between">
+        <div className="flex items-center gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+            <BiPackage className="text-2xl" />
+          </div>
+          <div>
+            <h2 className="text-xl font-black tracking-tight text-slate-800">Asset Register</h2>
+            <p className="text-sm text-slate-500">ทะเบียนทรัพย์สิน — บันทึก แก้ไข ค้นหา และคำนวณค่าเสื่อมราคา</p>
+          </div>
         </div>
-        <div className="flex gap-3">
-          <button onClick={() => fetchAll(search)} className="flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 px-4 py-2.5 text-sm font-bold backdrop-blur-sm transition"><BiRefresh className="mr-2 text-lg" /> Refresh</button>
-          <button onClick={() => openModal('CREATE')} className="flex items-center justify-center rounded-xl bg-emerald-500 hover:bg-emerald-400 px-5 py-2.5 text-sm font-bold shadow-md transition"><BiPlus className="mr-2 text-xl" /> New Asset</button>
+        <div className="flex shrink-0 gap-2">
+          <button onClick={() => fetchAll(search)} className="flex items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-50" title="Refresh"><BiRefresh className="mr-2 text-lg" /> Refresh</button>
+          <button onClick={() => openModal('CREATE')} className="flex items-center justify-center rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-700"><BiPlus className="mr-2 text-xl" /> New Asset</button>
         </div>
       </div>
 
-      <form onSubmit={handleSearch} className="mb-6 flex gap-3">
+      <form onSubmit={handleSearch} className="mb-5 flex gap-2">
         <div className="relative flex-1">
           <BiSearch className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-lg" />
           <input
@@ -229,13 +270,13 @@ function AssetRegister() {
             placeholder="ค้นหาด้วยรหัสทรัพย์สิน หรือรายละเอียด..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full rounded-xl border border-slate-300 bg-white pl-11 pr-4 py-3 text-sm font-medium outline-none focus:ring-blue-50 focus:border-blue-500"
+            className="w-full rounded-xl border border-slate-300 bg-white pl-11 pr-4 py-2.5 text-sm font-medium outline-none focus:ring-blue-50 focus:border-blue-500"
           />
         </div>
-        <button type="submit" className="rounded-xl bg-blue-600 hover:bg-blue-700 px-6 py-3 text-sm font-bold text-white shadow-md transition">ค้นหา</button>
+        <button type="submit" className="rounded-xl bg-blue-600 hover:bg-blue-700 px-6 py-2.5 text-sm font-bold text-white shadow-sm transition">ค้นหา</button>
       </form>
 
-      <div className="bg-white rounded-2xl shadow-md border border-slate-200 overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
         {isLoading ? (
           <div className="p-10 text-center text-slate-400 font-semibold animate-pulse">Loading assets...</div>
         ) : assets.length === 0 ? (
@@ -360,11 +401,36 @@ function AssetRegister() {
                   <label className="mb-1.5 block text-sm font-bold text-slate-700">ราคาทรัพย์สิน <span className="text-red-500">*</span></label>
                   <input type="number" step="0.01" min="0" required value={formData.cost} onChange={e => setFormData({ ...formData, cost: e.target.value })} disabled={modalMode === 'PREVIEW'} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:ring-blue-50 focus:border-blue-500 disabled:bg-slate-200 disabled:text-slate-500" />
                 </div>
+                {/* 🌟 เลือกอายุการใช้งานเป็นปี แล้วระบบแปลงเป็น %/ปี ให้อัตโนมัติ (เก็บลง DB เป็น % เหมือนเดิม)
+                    ถ้าไม่มีในตัวเลือก เลือก "กำหนดเอง" แล้วกรอก % ตรงๆ ได้ */}
                 <div>
-                  <label className="mb-1.5 block text-sm font-bold text-slate-700">อัตราค่าเสื่อมราคาต่อปี (%) <span className="text-red-500">*</span></label>
-                  <input type="number" step="0.01" min="0" max="100" required placeholder="เช่น 20" value={formData.depreciationRatePercent} onChange={e => setFormData({ ...formData, depreciationRatePercent: e.target.value })} disabled={modalMode === 'PREVIEW'} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:ring-blue-50 focus:border-blue-500 disabled:bg-slate-200 disabled:text-slate-500" />
+                  <label className="mb-1.5 block text-sm font-bold text-slate-700">อายุการใช้งาน <span className="text-red-500">*</span></label>
+                  <select required value={rateMode} onChange={e => handleRateModeChange(e.target.value)} disabled={modalMode === 'PREVIEW'} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:ring-blue-50 focus:border-blue-500 disabled:bg-slate-200 disabled:text-slate-500">
+                    <option value="">-- เลือกอายุการใช้งาน --</option>
+                    {DEPRECIATION_PRESETS.map(p => (
+                      <option key={p.years} value={String(p.years)}>{p.years} ปี ({p.percent}% ต่อปี)</option>
+                    ))}
+                    <option value="CUSTOM">กำหนดเอง (ระบุ % เอง)</option>
+                  </select>
                 </div>
               </div>
+
+              {rateMode === 'CUSTOM' ? (
+                <div>
+                  <label className="mb-1.5 block text-sm font-bold text-slate-700">อัตราค่าเสื่อมราคาต่อปี (%) <span className="text-red-500">*</span></label>
+                  <input type="number" step="0.01" min="0.01" max="100" required placeholder="เช่น 20" value={formData.depreciationRatePercent} onChange={e => setFormData({ ...formData, depreciationRatePercent: e.target.value })} disabled={modalMode === 'PREVIEW'} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:ring-blue-50 focus:border-blue-500 disabled:bg-slate-200 disabled:text-slate-500" />
+                  {Number(formData.depreciationRatePercent) > 0 && (
+                    <p className="mt-1 text-xs text-slate-400">
+                      เทียบเท่าอายุการใช้งานประมาณ {(100 / Number(formData.depreciationRatePercent)).toFixed(2)} ปี
+                    </p>
+                  )}
+                </div>
+              ) : rateMode !== '' && (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm">
+                  <span className="font-bold text-slate-500">อัตราค่าเสื่อมราคาต่อปี: </span>
+                  <span className="font-black text-slate-800">{formData.depreciationRatePercent}%</span>
+                </div>
+              )}
 
               <div>
                 <label className="mb-1.5 block text-sm font-bold text-slate-700">วันที่ซื้อ <span className="text-red-500">*</span></label>

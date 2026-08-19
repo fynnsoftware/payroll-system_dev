@@ -1,11 +1,13 @@
 // src/app/api/assets/route.ts
 // 🌟 [Phase 2 - Asset task #19] หน้าจอทะเบียนทรัพย์สิน — CRUD หลัก
-// ⚠️ ตามที่ user สั่งไว้ "อย่าเพิ่งกังวลเรื่อง login" — endpoint นี้ยังไม่ทำ auth check
-// (auth เต็มรูปแบบอยู่ใน task #10 แยกต่างหาก ห้ามลืมกลับมาใส่ก่อน deploy จริง)
+// 🔒 [security_asset] จำกัดขอบเขตตามบริษัทต้นสังกัดแล้ว: อยู่บริษัทแม่เห็นตัวเอง+ลูกในเครือ,
+// อยู่บริษัทลูกเห็นแค่ตัวเอง, ADMIN เห็นทั้งหมด (ดูกฎกลางที่ src/lib/companyScope.ts)
 import { NextResponse, NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getToken } from "next-auth/jwt";
 import { calcAssetDepreciation, getFiscalPeriod, DEFAULT_CALC_RULES, CalcRule } from "@/lib/depreciation";
 import { ensureAssetYearsClosed, getFrozenBFForYear } from "@/lib/assetYearClose";
+import { getAllowedCompanyIds, isCompanyAllowed } from "@/lib/companyScope";
 
 // ==========================================
 // 🟢 GET: ดึงรายการทรัพย์สิน (รองรับ filter บริษัท + group company)
@@ -19,6 +21,13 @@ export async function GET(request: NextRequest) {
     const search = searchParams.get("search");
     const statusFilter = searchParams.get("status"); // ACTIVE | TERMINATED | ALL
 
+    // 🔒 [security_asset] ต้องล็อกอินก่อน และเห็นได้เฉพาะบริษัทในขอบเขตของตัวเองเท่านั้น
+    const token = await getToken({ req: request });
+    if (!token) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    const allowedCompanyIds = await getAllowedCompanyIds(token);
+
     const where: any = {};
 
     if (companyId) {
@@ -30,7 +39,14 @@ export async function GET(request: NextRequest) {
         });
         companyIds = [...companyIds, ...subs.map((c) => c.id)];
       }
-      where.companyId = { in: companyIds };
+      // ตัดบริษัทที่อยู่นอกขอบเขตออก กันกรณียิง companyId ของบริษัทอื่นเข้ามาตรงๆ
+      if (allowedCompanyIds !== null) {
+        companyIds = companyIds.filter((id) => allowedCompanyIds.includes(id));
+      }
+      where.companyId = { in: companyIds.length > 0 ? companyIds : [-1] };
+    } else if (allowedCompanyIds !== null) {
+      // ไม่ได้ระบุบริษัทมา -> จำกัดให้เห็นเฉพาะในเครือของตัวเอง (ADMIN จะข้ามเงื่อนไขนี้)
+      where.companyId = { in: allowedCompanyIds.length > 0 ? allowedCompanyIds : [-1] };
     }
 
     if (categoryId) where.categoryId = Number(categoryId);
@@ -95,6 +111,12 @@ export async function GET(request: NextRequest) {
 // ==========================================
 export async function POST(request: NextRequest) {
   try {
+    // 🔒 [security_asset] สร้างทรัพย์สินได้เฉพาะให้บริษัทที่อยู่ในขอบเขตของตัวเอง
+    const token = await getToken({ req: request });
+    if (!token) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const body = await request.json();
     const {
       assetCode,
@@ -111,6 +133,14 @@ export async function POST(request: NextRequest) {
 
     if (!assetCode || !companyId || !categoryId || !description || cost === undefined || !depreciationRate || !purchaseDate) {
       return NextResponse.json({ error: "กรุณากรอกข้อมูลให้ครบถ้วน" }, { status: 400 });
+    }
+
+    const allowedCompanyIds = await getAllowedCompanyIds(token);
+    if (!isCompanyAllowed(allowedCompanyIds, Number(companyId))) {
+      return NextResponse.json(
+        { error: "Access Denied: ไม่มีสิทธิ์เพิ่มทรัพย์สินให้บริษัทนี้" },
+        { status: 403 },
+      );
     }
 
     if ((openingAccumDepr && !openingAsOfDate) || (!openingAccumDepr && openingAsOfDate)) {

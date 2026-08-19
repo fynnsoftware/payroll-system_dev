@@ -1,0 +1,90 @@
+'use client';
+
+// src/components/UserProfileHeader.tsx
+// 🌟 การ์ดโปรไฟล์ผู้ใช้งานสำหรับหน้าจอฝั่ง user (ธีมเดียวกับหน้า My Payslips)
+// ใช้ในโซน /asset เพื่อให้รู้ว่ากำลังใช้งานด้วยบัญชีไหน สังกัดบริษัทอะไร
+import { useState, useEffect } from 'react';
+import Image from 'next/image';
+import { useSession } from 'next-auth/react';
+
+interface MeResponse {
+  profile: {
+    id: string;
+    fullName: string;
+    position: string | null;
+    department: string | null;
+    startDate: string | null;
+    company?: { companyName: string; logoUrl: string | null } | null;
+  } | null;
+  username: string | null;
+  role: string | null;
+}
+
+export default function UserProfileHeader() {
+  const { data: session, status } = useSession();
+  const [me, setMe] = useState<MeResponse | null>(null);
+
+  useEffect(() => {
+    if (status !== 'authenticated') return;
+    fetch('/api/me')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setMe(data))
+      .catch(() => setMe(null));
+  }, [status]);
+
+  const profile = me?.profile;
+
+  // ชื่อที่แสดง: ชื่อเต็มจาก employee -> ชื่อใน session -> username
+  const displayName =
+    profile?.fullName || session?.user?.name || me?.username || 'Loading...';
+
+  // รหัสพนักงาน: id จาก employee -> employeeId ใน token -> username
+  const displayEmpId =
+    profile?.id || (session?.user as any)?.employeeId || me?.username || '-';
+
+  const logoUrl = profile?.company?.logoUrl
+    ? decodeURIComponent(profile.company.logoUrl)
+    : '/src/logoFynnSoft.jpg';
+
+  return (
+    <div className="mb-8 flex items-center justify-between overflow-hidden rounded-2xl bg-gradient-to-br from-blue-600 to-blue-800 p-8 text-white shadow-lg relative">
+      {/* รูปพื้นหลังตกแต่ง (ชุดเดียวกับหน้า My Payslips) */}
+      <div className="absolute -right-20 -top-20 opacity-10">
+        <svg width="300" height="300" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+          <path
+            fill="#FFFFFF"
+            d="M42.7,-73.4C55.9,-67.5,67.6,-57.4,76.5,-45.3C85.4,-33.2,91.5,-19.1,91.8,-4.9C92.2,9.3,86.8,23.5,78.2,35.6C69.6,47.7,57.8,57.7,44.9,64.8C32,71.9,18,76.1,3.4,70.6C-11.2,65.1,-25.2,49.9,-37.8,40.8C-50.4,31.7,-61.6,28.7,-70.5,19.3C-79.4,9.9,-86,-5.9,-84.1,-21C-82.2,-36.1,-71.8,-50.5,-58.5,-57.2C-45.2,-63.9,-29.1,-62.9,-14.8,-69C-0.5,-75.1,14,-88.3,28.3,-84.3C42.6,-80.3,56.8,-69,42.7,-73.4Z"
+            transform="translate(100 100) scale(1.1)"
+          />
+        </svg>
+      </div>
+
+      <div className="relative z-10 flex items-center">
+        <div className="mr-6 flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-full border-4 border-blue-400 bg-white p-1 shadow-sm">
+          <Image
+            src={logoUrl}
+            alt="Company Logo"
+            width={96}
+            height={96}
+            className="h-full w-full object-contain"
+          />
+        </div>
+        <div>
+          <h3 className="mb-1 text-2xl font-bold">{displayName}</h3>
+          <p className="mb-2 text-blue-100">
+            EMP ID: <span className="font-bold">{displayEmpId}</span> |{' '}
+            {profile?.department || '-'}
+          </p>
+          <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-blue-600">
+            Position: {profile?.position || me?.role || '-'}
+          </span>
+        </div>
+      </div>
+
+      <div className="relative z-10 hidden text-right lg:block">
+        <p className="mb-1 text-sm text-blue-100">Company</p>
+        <h5 className="text-xl font-bold">{profile?.company?.companyName || '-'}</h5>
+      </div>
+    </div>
+  );
+}
