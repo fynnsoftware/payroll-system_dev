@@ -1,0 +1,119 @@
+# 🏢 FynnSoft Payroll Management System
+
+A comprehensive web-based Payroll and Employee Management System built with modern web technologies. This system streamlines the process of employee record management, monthly salary imports, and automated payslip generation.
+
+## ✨ Key Features
+
+- **🔐 Role-Based Access Control (RBAC):** Secure authentication utilizing NextAuth.js with distinct access levels (`ADMIN`, `HR`, and `USER/EMPLOYEE`).
+- **👥 People Management:** - Complete CRUD operations for employee records.
+  - Multi-company entity support (Primary & Sub-companies).
+  - Status management (Active / Terminated).
+  - Password strength validation and secure credential management.
+- **📤 Smart Salary Import Wizard:**
+  - Multi-step validation process (Setup -> Validate -> Review -> Confirm).
+  - Support for `.xlsx` and `.csv` parsing.
+  - Automatic cross-checking of Employee IDs against the database and specific company entities.
+  - Overwrite protection and warning systems.
+- **📊 Advanced Analytics & Summary:**
+  - 12-Month Cross-Tab visualization with Year-To-Date (YTD) totals.
+  - Detailed breakdowns for Gross Income, Deductions (Tax, SSO, PVF), and Net Salary.
+  - Search and filter capabilities (by Company, Year, and EMP ID).
+  - One-click **Export to Excel**.
+- **📧 Automated Email Notifications:**
+  - Integrated SMTP (GoDaddy / Microsoft 365) to send system invitations and payslip alerts directly to employees.
+- **🧾 Employee Portal:** A dedicated secure space for employees to view and print their monthly payslips.
+
+## 🛠️ Tech Stack
+
+- **Framework:** [Next.js](https://nextjs.org/) (App Router)
+- **Language:** TypeScript
+- **Styling:** Tailwind CSS
+- **Database ORM:** [Prisma](https://www.prisma.io/)
+- **Authentication:** NextAuth.js
+- **Excel Processing:** SheetJS (`xlsx`)
+- **Email Service:** Nodemailer
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+Make sure you have [Node.js](https://nodejs.org/) (v18 or later) and a SQL Database (e.g., PostgreSQL / MySQL) installed.
+
+### Installation
+
+1. **Clone the repository**
+   ```bash
+   git clone [https://github.com/your-username/payroll-system.git](https://github.com/your-username/payroll-system.git)
+   --cd payroll-system
+   ```
+
+First, run the development server:
+
+2 . **install**
+
+`````bash
+npm install
+
+3. **Environment Setup**
+   Create a .env file in the root directory based on the provided .env.example:
+
+# ==========================================
+
+# ⚙️ Environment Variables Setup
+
+# ==========================================
+
+# 1. Database Configuration (Prisma & Supabase)
+
+DATABASE_URL="postgres://postgres:password@db.xxxx.supabase.co:5432/postgres"
+DIRECT_URL="postgres://postgres:password@db.xxxx.supabase.co:5432/postgres"
+
+# 2. Authentication (NextAuth.js)
+
+NEXTAUTH_URL="http://localhost:3000"
+NEXTAUTH_SECRET="your-super-secret-key-here"
+
+# 3. File Storage (Supabase Storage for App Uploads)
+
+NEXT_PUBLIC_SUPABASE_URL="https://xxxx.supabase.co"
+NEXT_PUBLIC_SUPABASE_ANON_KEY="your-supabase-anon-key-here"
+SUPABASE_SERVICE_ROLE_KEY="your-supabase-service-role-key-here"
+
+# 4. Email Notifications (SMTP - GoDaddy / Office365)
+
+SMTP_EMAIL="admin@yourcompany.com"
+SMTP_PASSWORD="your-app-password-or-email-password"
+
+4. **Database Migration**
+
+````bash
+npx prisma db push
+npx prisma generate
+
+5. **Run the Development Server**
+    ```bash
+    npm run dev
+    # or
+    yarn dev
+    # or
+    pnpm dev
+    # or
+    bun dev
+    ```
+
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+
+Project Structure (Key Directories)
+/src/app/admin - Admin and HR portal interfaces (Dashboards, Import, Summary).
+
+/src/app/employee - Standard user portal for payslips.
+
+/src/app/api - Backend API routes (RESTful endpoints).
+
+/prisma - Database schema and migration files.
+
+🔒 Security Notes
+Ensure .env is included in your .gitignore.
+
+Always use App Passwords for SMTP configurations if 2FA/MFA is enabled on your email account.
+`````
