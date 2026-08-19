@@ -6,6 +6,27 @@ import { prisma } from "@/lib/prisma";
 // code คงเดิม (HR/ASSET) เพื่อไม่ให้ข้อมูลเดิมพัง — ชื่อที่แสดงคือ Payroll / Assessment
 export const MODULE_CODES = ["HR", "ASSET"] as const;
 
+export const DEFAULT_MODULES = [
+  { code: "HR", name: "Payroll", sortOrder: 1 },
+  { code: "ASSET", name: "Assessment", sortOrder: 2 },
+];
+
+/**
+ * 🐛 [bug] แถวใน Module เคยถูก seed เฉพาะตอนมีคนเรียก GET /api/modules ซึ่ง layout จะเรียกเฉพาะ
+ * ตอน user ไม่ใช่ ADMIN — พอ ADMIN ล็อกอินเข้ามาตั้งค่าเป็นคนแรก ตาราง Module ยังว่างอยู่
+ * ทำให้ติ๊ก checkbox แล้วหา moduleId ไม่เจอ เลยบันทึกไม่ติดแบบเงียบๆ
+ * แก้โดยการันตีว่ามีแถว master อยู่เสมอก่อนใช้งาน (idempotent เรียกซ้ำได้ไม่พัง)
+ */
+export async function ensureModulesSeeded(): Promise<void> {
+  for (const m of DEFAULT_MODULES) {
+    await prisma.module.upsert({
+      where: { code: m.code },
+      update: { name: m.name },
+      create: m,
+    });
+  }
+}
+
 /**
  * แปลงค่าที่ส่งมาจากฟอร์ม (JSON string เช่น '["HR","ASSET"]') ให้เป็น array ของ code ที่ valid เท่านั้น
  * ถ้าไม่ได้ส่งมาเลย จะคืน null เพื่อให้ผู้เรียกรู้ว่า "ไม่ได้ตั้งใจแก้ module" (ไม่ใช่ "ตั้งใจเอาออกทั้งหมด")
@@ -71,6 +92,8 @@ export async function validateRoleForCompany(
       : "Access Denied: เฉพาะ ADMIN เท่านั้นที่สร้าง/แก้ไขบัญชีระดับ ADMIN ได้";
   }
 
+  // 🌟 role อื่นนอกจาก ADMIN ต้องตรงกับ module ที่บริษัทเปิดใช้เสมอ ไม่ว่าคนตั้งจะเป็นใคร
+  // (ADMIN มีอภิสิทธิ์แค่เรื่อง "เห็นทุกบริษัท" กับ "ตั้ง role ADMIN ได้" เท่านั้น)
   const required = ROLE_REQUIRED_MODULE[normalized];
   if (!required) return "สิทธิ์ที่เลือกไม่ถูกต้อง";
 
@@ -91,6 +114,9 @@ export async function syncCompanyModules(
   moduleCodes: string[] | null,
 ): Promise<void> {
   if (moduleCodes === null) return;
+
+  // 🐛 การันตีว่ามีแถว master ของ Module ก่อน ไม่งั้นจะหา moduleId ไม่เจอแล้วบันทึกไม่ติดแบบเงียบๆ
+  await ensureModulesSeeded();
 
   const modules = await prisma.module.findMany({
     where: { code: { in: moduleCodes } },

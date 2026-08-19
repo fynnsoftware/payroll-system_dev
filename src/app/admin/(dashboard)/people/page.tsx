@@ -334,6 +334,9 @@ Payroll Administrator`);
 
   const selectedCompanyModules = getCompanyModules(formData.companyId);
 
+  // 🌟 สิทธิ์ที่เลือกได้ต้องตรงกับ module ที่บริษัทนั้นเปิดใช้เสมอ (ใช้กับทุก role รวมถึง ADMIN)
+  //    เช่น บริษัทเปิดแค่ Payroll -> เลือกได้แค่ Standard User / Human Resources
+  // ยกเว้น "System Administrator" ที่ไม่ผูกกับ module แต่ผูกกับสิทธิ์คนสร้าง (ต้องเป็น ADMIN เท่านั้น)
   const availableRoles = ROLE_OPTIONS.filter((opt) => {
     if (opt.value === 'ADMIN') return currentUserRole === 'ADMIN';
     return opt.requiresModule ? selectedCompanyModules.includes(opt.requiresModule) : true;

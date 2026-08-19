@@ -3,12 +3,8 @@
 // GET คืนทั้งรายการ module และ access matrix ปัจจุบัน (lazy-seed ถ้ายังไม่มี)
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-
-// 🌟 code คงเดิม (HR/ASSET) เพื่อไม่ให้ข้อมูลเดิมพัง แต่ชื่อที่แสดงเปลี่ยนเป็น Payroll / Assessment ตาม branding ใหม่
-const DEFAULT_MODULES = [
-  { code: "HR", name: "Payroll", sortOrder: 1 },
-  { code: "ASSET", name: "Assessment", sortOrder: 2 },
-];
+// 🌟 ใช้นิยาม module ชุดเดียวกับฝั่ง company (source of truth เดียว กัน seed ไม่ตรงกัน)
+import { DEFAULT_MODULES, ensureModulesSeeded } from "@/lib/companyModules";
 
 // role เริ่มต้นที่เข้าแต่ละ module ได้ — ADMIN เข้าได้ทุกโมดูลเสมอ (ไม่ผ่าน matrix นี้ เช็คแยกในโค้ด)
 const DEFAULT_ACCESS: { role: string; moduleCode: string }[] = [
@@ -18,29 +14,21 @@ const DEFAULT_ACCESS: { role: string; moduleCode: string }[] = [
 
 export async function GET() {
   try {
-    let modules = await prisma.module.findMany({ orderBy: { sortOrder: "asc" } });
+    // 🌟 การันตีว่ามีแถว master ครบและชื่อตรงกับ branding ปัจจุบันเสมอ (idempotent)
+    await ensureModulesSeeded();
+    const modules = await prisma.module.findMany({ orderBy: { sortOrder: "asc" } });
 
-    // 🌟 อัปเดตชื่อที่แสดงให้ตรงกับ branding ปัจจุบันเสมอ (แถวเก่าเคยถูก seed ด้วยชื่อ HR/Assetment)
-    for (const m of DEFAULT_MODULES) {
-      const existing = modules.find((row) => row.code === m.code);
-      if (existing && existing.name !== m.name) {
-        await prisma.module.update({ where: { id: existing.id }, data: { name: m.name } });
-        existing.name = m.name;
-      }
-    }
-
-    if (modules.length === 0) {
-      await prisma.module.createMany({ data: DEFAULT_MODULES, skipDuplicates: true });
-      modules = await prisma.module.findMany({ orderBy: { sortOrder: "asc" } });
-
+    // 🐛 [bug] เดิม seed access matrix เฉพาะตอน Module ยังว่าง — แต่ตอนนี้ Module อาจถูก seed
+    // จากฝั่งบันทึก company ไปก่อนแล้ว ทำให้ matrix ไม่เคยถูก seed เลย เปลี่ยนมาเช็คที่ตาราง access ตรงๆ แทน
+    let accessRows = await prisma.roleModuleAccess.findMany();
+    if (accessRows.length === 0) {
       const moduleIdByCode = new Map(modules.map((m) => [m.code, m.id]));
       await prisma.roleModuleAccess.createMany({
         data: DEFAULT_ACCESS.map((a) => ({ role: a.role, moduleId: moduleIdByCode.get(a.moduleCode)! })),
         skipDuplicates: true,
       });
+      accessRows = await prisma.roleModuleAccess.findMany();
     }
-
-    const accessRows = await prisma.roleModuleAccess.findMany();
     const moduleById = new Map(modules.map((m) => [m.id, m.code]));
     const accessMatrix = accessRows.map((a) => ({ role: a.role, moduleCode: moduleById.get(a.moduleId) }));
 
