@@ -12,7 +12,19 @@ interface Company {
   id: number;
   companyName: string;
   parentId: number | null;
+  moduleCodes?: string[]; // 🌟 [module_company] module ที่บริษัทเปิดใช้ ("HR" = Payroll, "ASSET" = Assessment)
 }
+
+// 🌟 [module_company] role ที่เลือกได้ ขึ้นกับ module ที่บริษัทนั้นเปิดใช้งาน
+//   - module HR (Payroll)      -> เลือก USER / HR ได้
+//   - module ASSET (Assessment)-> เลือก ASSET ได้
+//   - ADMIN                    -> เฉพาะคนที่ล็อกอินเป็น ADMIN เท่านั้นถึงจะสร้างได้
+const ROLE_OPTIONS: { value: string; label: string; requiresModule?: string }[] = [
+  { value: 'USER', label: 'Standard User (Employee)', requiresModule: 'HR' },
+  { value: 'HR', label: 'Human Resources (HR)', requiresModule: 'HR' },
+  { value: 'ASSET', label: 'Asset Management (Assessment)', requiresModule: 'ASSET' },
+  { value: 'ADMIN', label: 'System Administrator' },
+];
 
 interface Employee {
   id: string;
@@ -115,7 +127,8 @@ export default function PeopleManagement() {
     setShowPassword(false);
     
     if (type === 'add') {
-      setFormData({ role: 'USER', companyId: undefined, password: '', isActive: true });
+      // 🌟 [module_company] ยังไม่กำหนด role จนกว่าจะเลือกบริษัท (เพราะสิทธิ์ที่เลือกได้ขึ้นกับ module ของบริษัท)
+      setFormData({ role: undefined, companyId: undefined, password: '', isActive: true });
     } else if ((type === 'edit' || type === 'preview') && item) {
       // 🌟 ดึงข้อมูลมาแสดงในฟอร์มเหมือนกันทั้ง Edit และ Preview
       setFormData({ 
@@ -159,6 +172,14 @@ Payroll Administrator`);
   const handleSaveEmployee = async () => {
     if (!formData.id || !formData.name || !formData.companyId || !formData.username) {
       return alert('กรุณากรอกข้อมูลที่จำเป็น (*) ให้ครบถ้วน');
+    }
+
+    // 🌟 [module_company] กันเลือกสิทธิ์ที่บริษัทนั้นไม่มี module รองรับ / กัน non-admin สร้าง ADMIN
+    if (!formData.role) {
+      return alert('กรุณาเลือก Permission Level');
+    }
+    if (!availableRoles.some((opt) => opt.value === formData.role)) {
+      return alert('สิทธิ์ที่เลือกไม่ตรงกับ module ที่บริษัทนี้เปิดใช้งาน กรุณาเลือกใหม่');
     }
 
     const isAdd = modalType === 'add';
@@ -296,6 +317,47 @@ Payroll Administrator`);
   const totalPages = itemsPerPage === 'all' ? 1 : Math.ceil(totalItems / itemsPerPage);
   const startIndex = itemsPerPage === 'all' ? 0 : (currentPage - 1) * itemsPerPage;
   const currentItems = filteredEmployees.slice(startIndex, itemsPerPage === 'all' ? totalItems : startIndex + itemsPerPage);
+
+  // 🌟 [module_company] หา module ของบริษัทที่เลือกอยู่ในฟอร์ม (ถ้าเป็น sub-company ที่ไม่ได้ตั้ง module ไว้
+  // จะ fallback ไปดู module ของบริษัทแม่ เพื่อไม่ให้ sub ที่ยังไม่ได้ตั้งค่ากลายเป็นเลือก role ไม่ได้เลย)
+  const getCompanyModules = (companyId?: number): string[] => {
+    if (!companyId) return [];
+    const company = companies.find((c) => c.id === companyId);
+    if (!company) return [];
+    if (company.moduleCodes && company.moduleCodes.length > 0) return company.moduleCodes;
+    if (company.parentId) {
+      const parent = companies.find((c) => c.id === company.parentId);
+      return parent?.moduleCodes || [];
+    }
+    return [];
+  };
+
+  const selectedCompanyModules = getCompanyModules(formData.companyId);
+
+  const availableRoles = ROLE_OPTIONS.filter((opt) => {
+    if (opt.value === 'ADMIN') return currentUserRole === 'ADMIN';
+    return opt.requiresModule ? selectedCompanyModules.includes(opt.requiresModule) : true;
+  });
+
+  // ถ้าเปลี่ยนบริษัทแล้ว role เดิมใช้ไม่ได้กับ module ของบริษัทใหม่ ให้รีเซ็ตเป็นตัวแรกที่เลือกได้
+  const handleCompanyChange = (companyId: number) => {
+    const modules = getCompanyModules(companyId);
+    const stillValid = ROLE_OPTIONS.some(
+      (opt) =>
+        opt.value === formData.role &&
+        (opt.value === 'ADMIN'
+          ? currentUserRole === 'ADMIN'
+          : !opt.requiresModule || modules.includes(opt.requiresModule)),
+    );
+    const fallback = ROLE_OPTIONS.find(
+      (opt) => opt.requiresModule && modules.includes(opt.requiresModule),
+    );
+    setFormData({
+      ...formData,
+      companyId,
+      role: (stillValid ? formData.role : (fallback?.value as any)) || undefined,
+    });
+  };
 
   const renderCompanyOptions = () => {
     const primaryCompanies = companies.filter(c => !c.parentId);
@@ -449,7 +511,7 @@ Payroll Administrator`);
                 <div className="col-span-1"><label className="font-bold text-xs uppercase text-slate-500 mb-1.5 block">Full Name *</label><input type="text" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} disabled={modalType === 'preview'} className="w-full rounded-xl border border-slate-200 p-3 outline-none focus:border-blue-500 font-bold disabled:bg-slate-100 disabled:text-slate-500" placeholder="John Doe" /></div>
                 
                 <div className="col-span-2"><label className="font-bold text-xs uppercase text-slate-500 mb-1.5 block">Company Entity *</label>
-                  <select value={formData.companyId || ''} onChange={e => setFormData({...formData, companyId: Number(e.target.value)})} disabled={modalType === 'preview'} className="w-full rounded-xl border border-slate-200 p-3 outline-none focus:border-blue-500 font-bold bg-white disabled:bg-slate-100 disabled:text-slate-500">
+                  <select value={formData.companyId || ''} onChange={e => handleCompanyChange(Number(e.target.value))} disabled={modalType === 'preview'} className="w-full rounded-xl border border-slate-200 p-3 outline-none focus:border-blue-500 font-bold bg-white disabled:bg-slate-100 disabled:text-slate-500">
                     <option value="">Select Entity</option>
                     {renderCompanyOptions()}
                   </select>
@@ -484,13 +546,24 @@ Payroll Administrator`);
                         </div>
                       )}
 
+                      {/* 🌟 [module_company] ตัวเลือก Permission Level ขึ้นกับ module ที่บริษัทนั้นเปิดใช้ */}
                       <div className="md:col-span-2 mt-2"><label className="font-bold text-[10px] uppercase text-blue-400 mb-1 block">Permission Level</label>
-                        <select value={formData.role || 'USER'} onChange={e => setFormData({...formData, role: e.target.value as any})} disabled={modalType === 'preview'} className="w-full rounded-lg border-blue-200 border p-2.5 font-black text-blue-700 bg-white shadow-sm disabled:bg-blue-100/50">
-                          <option value="USER">Standard User (Employee)</option>
-                          <option value="HR">Human Resources (HR)</option>
-                          <option value="ASSET">Asset Management (Assetment)</option>
-                          {currentUserRole === 'ADMIN' && <option value="ADMIN">System Administrator</option>}
+                        <select value={formData.role || ''} onChange={e => setFormData({...formData, role: e.target.value as any})} disabled={modalType === 'preview' || availableRoles.length === 0} className="w-full rounded-lg border-blue-200 border p-2.5 font-black text-blue-700 bg-white shadow-sm disabled:bg-blue-100/50">
+                          <option value="">-- Select Permission --</option>
+                          {availableRoles.map(opt => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                          ))}
                         </select>
+                        {modalType !== 'preview' && formData.companyId && availableRoles.length === 0 && (
+                          <p className="mt-1.5 text-[11px] font-bold text-amber-600">
+                            บริษัทนี้ยังไม่ได้เปิดใช้ module ใดเลย กรุณาไปตั้งค่า Module ที่หน้า Company Management ก่อน
+                          </p>
+                        )}
+                        {modalType !== 'preview' && !formData.companyId && (
+                          <p className="mt-1.5 text-[11px] font-medium text-slate-400">
+                            เลือกบริษัทก่อน เพื่อให้ระบบแสดงสิทธิ์ที่เลือกได้ตาม module ของบริษัทนั้น
+                          </p>
+                        )}
                       </div>
                    </div>
                 </div>

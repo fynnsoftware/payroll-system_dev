@@ -3,6 +3,7 @@ import { NextResponse, NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { createClient } from "@supabase/supabase-js"; // 🌟 นำเข้า Supabase
 import { getToken } from "next-auth/jwt";
+import { parseModuleCodes, syncCompanyModules } from "@/lib/companyModules";
 
 // สร้างตัวแทน (Client) สำหรับคุยกับ Supabase
 const supabase = createClient(
@@ -30,6 +31,9 @@ export async function PUT(
     // (periodEndDate ถูกตัดออกแล้วตาม phase2asset_#15 — ค่าเสื่อมราคายึด 31 ธ.ค. เสมอทุกบริษัท)
     const address = (formData.get("address") as string) || null;
     const description = (formData.get("description") as string) || null;
+
+    // 🌟 [module_company] module ที่บริษัทนี้เปิดใช้ (JSON array ของ code)
+    const moduleCodes = parseModuleCodes(formData.get("moduleCodes") as string);
 
     const token = await getToken({ req: request }).catch(() => null);
     const preparedBy = (token?.name as string) || (token as any)?.username || "SYSTEM";
@@ -108,6 +112,8 @@ export async function PUT(
         preparedBy,
       },
     });
+
+    await syncCompanyModules(id, moduleCodes);
 
     return NextResponse.json(
       { message: "อัปเดตสำเร็จ!", data: updatedCompany },

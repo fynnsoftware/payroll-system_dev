@@ -1,13 +1,15 @@
 // src/app/api/employees/[id]/route.ts
-import { NextResponse } from "next/server";
+import { NextResponse, NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
+import { getToken } from "next-auth/jwt";
+import { validateRoleForCompany } from "@/lib/companyModules";
 
 // ==========================================
 // 🟡 PUT: สำหรับ Edit ข้อมูล และเปลี่ยนสถานะ (Active/Terminate)
 // ==========================================
 export async function PUT(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
@@ -39,9 +41,40 @@ export async function PUT(
       );
     }
 
+    // 🌟 [module_company] คนที่ไม่ใช่ ADMIN ห้ามแตะบัญชีระดับ ADMIN (กันยิง API ตรงข้าม UI ที่ซ่อนไว้)
+    const actorToken = await getToken({ req: request });
+    if (!actorToken) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    if (
+      existingEmployee.user?.role === "ADMIN" &&
+      actorToken.role !== "ADMIN"
+    ) {
+      return NextResponse.json(
+        { error: "Access Denied: เฉพาะ ADMIN เท่านั้นที่แก้ไขบัญชีระดับ ADMIN ได้" },
+        { status: 403 },
+      );
+    }
+
     // 🌟 เตรียมค่าสถานะใหม่ที่จะใช้อัปเดต
     const newIsActiveStatus =
       isActive !== undefined ? isActive : existingEmployee.isActive;
+
+    // 🌟 [module_company] ถ้ามีการเปลี่ยน role ต้องเช็คว่าใช้ได้กับ module ของบริษัทที่สังกัด
+    // และ ADMIN ต้องถูกตั้งโดย ADMIN เท่านั้น (ข้ามการเช็คถ้าเป็นแค่ toggle สถานะ ไม่ได้ส่ง role มา)
+    if (role) {
+      const targetCompanyId = companyId
+        ? Number(companyId)
+        : existingEmployee.currentCompanyId;
+      const roleError = await validateRoleForCompany(
+        role,
+        targetCompanyId,
+        actorToken.role as string,
+      );
+      if (roleError) {
+        return NextResponse.json({ error: roleError }, { status: 403 });
+      }
+    }
 
     const result = await prisma.$transaction(async (tx) => {
       // 1. อัปเดตข้อมูลฝั่ง Employee
@@ -100,7 +133,7 @@ export async function PUT(
 // 🔴 DELETE: สำหรับลบพนักงานทิ้งถาวร
 // ==========================================
 export async function DELETE(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
@@ -110,12 +143,25 @@ export async function DELETE(
     // หาพนักงานคนนี้ก่อนเพื่อเอา userId ไปลบในตาราง User ด้วย
     const existingEmployee = await prisma.employee.findUnique({
       where: { id },
+      include: { user: true },
     });
 
     if (!existingEmployee) {
       return NextResponse.json(
         { error: "ไม่พบพนักงานในระบบ" },
         { status: 404 },
+      );
+    }
+
+    // 🌟 [module_company] คนที่ไม่ใช่ ADMIN ห้ามลบบัญชีระดับ ADMIN
+    const actorToken = await getToken({ req: request });
+    if (!actorToken) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    if (existingEmployee.user?.role === "ADMIN" && actorToken.role !== "ADMIN") {
+      return NextResponse.json(
+        { error: "Access Denied: เฉพาะ ADMIN เท่านั้นที่ลบบัญชีระดับ ADMIN ได้" },
+        { status: 403 },
       );
     }
 

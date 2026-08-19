@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import nodemailer from "nodemailer";
 import { getToken } from "next-auth/jwt"; // 🌟 นำเข้า getToken
+import { validateRoleForCompany } from "@/lib/companyModules";
 
 // ==========================================
 // 🟢 GET: ดึงข้อมูลพนักงานทั้งหมด (จำกัดสิทธิ์ HR)
@@ -59,9 +60,15 @@ export async function GET(request: NextRequest) {
     }
 
     // 🌟 3. ประกอบร่างเงื่อนไขการดึงข้อมูลพนักงาน
-    const whereCondition = allowedCompanyIds
+    const whereCondition: any = allowedCompanyIds
       ? { currentCompanyId: { in: allowedCompanyIds } }
       : {};
+
+    // 🌟 [module_company] คนที่ไม่ใช่ ADMIN (เช่น HR) ต้องไม่เห็นบัญชีระดับ ADMIN ในรายการเลย
+    // (พนักงานที่ยังไม่มี user account จะยังแสดงตามปกติ เพราะ relation เป็น null ไม่เข้าเงื่อนไขนี้)
+    if (userRole !== "ADMIN") {
+      whereCondition.NOT = { user: { role: "ADMIN" } };
+    }
 
     const employees = await prisma.employee.findMany({
       where: whereCondition,
@@ -101,21 +108,23 @@ export async function POST(request: NextRequest) {
     } = body;
 
     const newRole = role ? role.toUpperCase() : "USER";
-    if (token.role === "HR" && newRole === "ADMIN") {
-      return NextResponse.json(
-        {
-          error:
-            "Access Denied: สิทธิ์ HR ไม่สามารถสร้างบัญชีระดับ ADMIN ได้ครับ",
-        },
-        { status: 403 },
-      );
-    }
 
     if (!id || !fullName || !companyId || !username || !password) {
       return NextResponse.json(
         { error: "กรุณากรอกข้อมูลสำคัญและรหัสผ่านให้ครบถ้วน" },
         { status: 400 },
       );
+    }
+
+    // 🌟 [module_company] ตรวจสิทธิ์ที่จะตั้งให้ ต้องตรงกับ module ที่บริษัทเปิดใช้
+    // และ ADMIN ต้องถูกสร้างโดย ADMIN เท่านั้น
+    const roleError = await validateRoleForCompany(
+      newRole,
+      Number(companyId),
+      token.role as string,
+    );
+    if (roleError) {
+      return NextResponse.json({ error: roleError }, { status: 403 });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -125,7 +134,7 @@ export async function POST(request: NextRequest) {
         data: {
           username: username,
           passwordHash: hashedPassword,
-          role: role ? role.toUpperCase() : "USER",
+          role: newRole,
         },
       });
 

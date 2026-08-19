@@ -4,9 +4,10 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
+// 🌟 code คงเดิม (HR/ASSET) เพื่อไม่ให้ข้อมูลเดิมพัง แต่ชื่อที่แสดงเปลี่ยนเป็น Payroll / Assessment ตาม branding ใหม่
 const DEFAULT_MODULES = [
-  { code: "HR", name: "HR", sortOrder: 1 },
-  { code: "ASSET", name: "Assetment", sortOrder: 2 },
+  { code: "HR", name: "Payroll", sortOrder: 1 },
+  { code: "ASSET", name: "Assessment", sortOrder: 2 },
 ];
 
 // role เริ่มต้นที่เข้าแต่ละ module ได้ — ADMIN เข้าได้ทุกโมดูลเสมอ (ไม่ผ่าน matrix นี้ เช็คแยกในโค้ด)
@@ -18,6 +19,15 @@ const DEFAULT_ACCESS: { role: string; moduleCode: string }[] = [
 export async function GET() {
   try {
     let modules = await prisma.module.findMany({ orderBy: { sortOrder: "asc" } });
+
+    // 🌟 อัปเดตชื่อที่แสดงให้ตรงกับ branding ปัจจุบันเสมอ (แถวเก่าเคยถูก seed ด้วยชื่อ HR/Assetment)
+    for (const m of DEFAULT_MODULES) {
+      const existing = modules.find((row) => row.code === m.code);
+      if (existing && existing.name !== m.name) {
+        await prisma.module.update({ where: { id: existing.id }, data: { name: m.name } });
+        existing.name = m.name;
+      }
+    }
 
     if (modules.length === 0) {
       await prisma.module.createMany({ data: DEFAULT_MODULES, skipDuplicates: true });

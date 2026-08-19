@@ -23,7 +23,7 @@ const MENU_ITEMS = [
   { name: "Settings", path: "/admin/settings", icon: BiCog, allowedRoles: ["ADMIN", "ASSET"], moduleCode: "ASSET" },
 ];
 
-const MODULE_LABELS: Record<string, string> = { HR: "HR", ASSET: "Assetment" };
+const MODULE_LABELS: Record<string, string> = { HR: "Payroll", ASSET: "Assessment" };
 
 export default function AdminLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname(); // ดึง URL ปัจจุบันมาตรวจสอบ
@@ -91,7 +91,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
         {/* 🌟 2. ปรับแต่งส่วน Header ของ Sidebar เพิ่มคำว่า Hi {adminName} ตรงนี้ครับ */}
         <div className="border-b border-gray-100 p-6">
           <div className="text-xl font-black tracking-tight text-blue-600">
-            PAYROLL ADMIN
+            Fynnsoft
           </div>
           <div className="mt-2 flex items-center text-sm font-medium text-slate-500">
             <span className="mr-1.5 text-lg">👋</span> Hi, <span className="ml-1 font-bold text-slate-700">{adminName}</span>

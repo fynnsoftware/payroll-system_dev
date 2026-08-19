@@ -3,6 +3,7 @@ import { NextResponse, NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { createClient } from "@supabase/supabase-js";
 import { getToken } from "next-auth/jwt";
+import { parseModuleCodes, syncCompanyModules } from "@/lib/companyModules";
 
 
 const supabase = createClient(
@@ -27,24 +28,25 @@ export async function GET(request: NextRequest) {
 
     let allowedCompanyIds: number[] | null = null;
 
-    // 🌟 ลอจิกจำกัดสิทธิ์ (แก้ไขตามกฎเหล็ก)
-    if (userRole === "HR" && userCompanyId) {
-      const hrCompany = await prisma.company.findUnique({
+    // 🌟 ลอจิกจำกัดสิทธิ์ตามเครือบริษัท — ใช้กฎเดียวกันทั้ง HR และ ASSET
+    // (ADMIN ไม่ถูกจำกัด เห็นทุกบริษัทเสมอ)
+    if ((userRole === "HR" || userRole === "ASSET") && userCompanyId) {
+      const ownCompany = await prisma.company.findUnique({
         where: { id: userCompanyId },
         select: { id: true, parentId: true },
       });
 
-      if (hrCompany) {
-        if (!hrCompany.parentId) {
+      if (ownCompany) {
+        if (!ownCompany.parentId) {
           // 👑 อยู่ Primary -> เห็น Primary + Sub ทั้งหมด
           const subCompanies = await prisma.company.findMany({
-            where: { parentId: hrCompany.id },
+            where: { parentId: ownCompany.id },
             select: { id: true },
           });
-          allowedCompanyIds = [hrCompany.id, ...subCompanies.map((c) => c.id)];
+          allowedCompanyIds = [ownCompany.id, ...subCompanies.map((c) => c.id)];
         } else {
           // 🏢 อยู่ Sub -> เห็นเฉพาะ Sub ตัวเองอย่างเดียว!
-          allowedCompanyIds = [hrCompany.id];
+          allowedCompanyIds = [ownCompany.id];
         }
       }
 
@@ -59,11 +61,59 @@ export async function GET(request: NextRequest) {
 
     const companies = await prisma.company.findMany({
       where: whereCondition,
-      include: { parent: true, subCompanies: true },
+      include: {
+        parent: true,
+        subCompanies: true,
+        // 🌟 [module_company] แนบ module ที่บริษัทเปิดใช้มาด้วย เพื่อให้ฟอร์มติ๊ก checkbox ได้ถูกต้อง
+        moduleLinks: { include: { module: true } },
+      },
       orderBy: { id: "asc" },
     });
 
-    return NextResponse.json(companies, { status: 200 });
+    // แปลงให้ frontend ใช้ง่าย: moduleCodes = ["HR", "ASSET"]
+    let result = companies.map((c) => ({
+      ...c,
+      moduleCodes: c.moduleLinks.map((link) => link.module.code),
+    }));
+
+    // 🌟 [module_company] กรองตาม module ที่บริษัทเปิดใช้
+    //   role HR    -> เห็นเฉพาะบริษัทที่เปิด module Payroll (HR)
+    //   role ASSET -> เห็นเฉพาะบริษัทที่เปิด module Assessment (ASSET)
+    //   ADMIN      -> เห็นทั้งหมด ไม่กรอง (จะได้เข้าไปตั้งค่า module ให้บริษัทได้เสมอ)
+    // ⚠️ sub-company ที่ยังไม่ได้ตั้ง module เอง จะยึดตาม module ของบริษัทแม่
+    const requiredModule =
+      userRole === "HR" ? "HR" : userRole === "ASSET" ? "ASSET" : null;
+
+    if (requiredModule) {
+      // เตรียม map ของ module ระดับบริษัทแม่ไว้ใช้ fallback (บริษัทแม่อาจไม่ได้อยู่ในผลลัพธ์ที่ดึงมา)
+      const parentIds = [
+        ...new Set(result.map((c) => c.parentId).filter((id): id is number => !!id)),
+      ];
+      const parents = parentIds.length
+        ? await prisma.company.findMany({
+            where: { id: { in: parentIds } },
+            select: {
+              id: true,
+              moduleLinks: { select: { module: { select: { code: true } } } },
+            },
+          })
+        : [];
+      const parentModules = new Map(
+        parents.map((p) => [p.id, p.moduleLinks.map((l) => l.module.code)]),
+      );
+
+      result = result.filter((c) => {
+        const codes =
+          c.moduleCodes.length > 0
+            ? c.moduleCodes
+            : c.parentId
+              ? parentModules.get(c.parentId) || []
+              : [];
+        return codes.includes(requiredModule);
+      });
+    }
+
+    return NextResponse.json(result, { status: 200 });
   } catch (error) {
     console.error("GET Companies Error:", error);
     return NextResponse.json(
@@ -88,6 +138,9 @@ export async function POST(request: NextRequest) {
     // (periodEndDate ถูกตัดออกแล้วตาม phase2asset_#15 — ค่าเสื่อมราคายึด 31 ธ.ค. เสมอทุกบริษัท)
     const address = (formData.get("address") as string) || null;
     const description = (formData.get("description") as string) || null;
+
+    // 🌟 [module_company] module ที่บริษัทนี้เปิดใช้ ส่งมาเป็น JSON array ของ code เช่น ["HR","ASSET"]
+    const moduleCodes = parseModuleCodes(formData.get("moduleCodes") as string);
 
     // ผู้จัดทำ (Auto display) — ดึงจาก session ถ้ามี ไม่ block ถ้าไม่มี token (auth เต็มรูปแบบอยู่ใน task แยก)
     const token = await getToken({ req: request }).catch(() => null);
@@ -137,6 +190,8 @@ export async function POST(request: NextRequest) {
         preparedBy,
       },
     });
+
+    await syncCompanyModules(newCompany.id, moduleCodes);
 
     return NextResponse.json(
       { message: "สร้างบริษัทสำเร็จ!", data: newCompany },

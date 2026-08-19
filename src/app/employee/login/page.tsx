@@ -2,7 +2,7 @@
 'use client';
 
 import { useState } from 'react';
-import { signIn } from 'next-auth/react';
+import { signIn, getSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { BiLockAlt, BiUser, BiErrorCircle } from 'react-icons/bi';
@@ -29,8 +29,20 @@ export default function EmployeeLoginPage() {
       setError(res.error);
       setIsLoading(false);
     } else {
-      // 🌟 พนักงานล็อกอินผ่าน ให้พุ่งไปหน้า Employee Hub (ดูสลิป)
-      router.push('/employee/payslips'); 
+      // 🌟 [asset_portal] ส่งไปหน้าแรกตาม role ที่ล็อกอินเข้ามา
+      //   ASSET      -> โซนทรัพย์สิน (/asset)
+      //   ADMIN / HR -> โซนผู้ดูแล (/admin)
+      //   USER       -> หน้าสลิปเงินเดือนของตัวเอง
+      const session = await getSession();
+      const role = (session?.user as any)?.role;
+
+      if (role === 'ASSET') {
+        router.push('/asset/register');
+      } else if (role === 'ADMIN' || role === 'HR') {
+        router.push('/admin/company');
+      } else {
+        router.push('/employee/payslips');
+      }
     }
   };
 
@@ -52,8 +64,8 @@ export default function EmployeeLoginPage() {
                                     priority
                                   />
                                 </div>
-            <h2 className="text-2xl font-black text-slate-800 tracking-tight">Employee Portal</h2>
-            <p className="mt-2 text-sm font-medium text-slate-500">Access your payslips and profile</p>
+            <h2 className="text-2xl font-black text-slate-800 tracking-tight">INTELLIGENT PORTAL</h2>
+            <p className="mt-2 text-sm font-medium text-slate-500">Access our services and your profile</p>
           </div>
 
           <form onSubmit={handleLogin} className="p-8 space-y-6 bg-slate-50/50">
@@ -64,7 +76,7 @@ export default function EmployeeLoginPage() {
             )}
 
             <div>
-              <label className="mb-2 block text-sm font-bold text-slate-700">Employee ID or Email</label>
+              <label className="mb-2 block text-sm font-bold text-slate-700">User ID or Email</label>
               <div className="relative">
                 <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4 text-slate-400"><BiUser className="text-lg" /></div>
                 <input type="text" required value={username} onChange={(e) => setUsername(e.target.value)} className="w-full rounded-xl border border-slate-300 bg-white py-3 pl-11 pr-4 text-sm font-semibold text-slate-800 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-50" placeholder="e.g. EMP001" />

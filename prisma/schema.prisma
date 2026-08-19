@@ -55,6 +55,9 @@ model Company {
 
   importBatches PayrollImportBatch[]
   assets        Asset[]
+
+  // 🌟 [module_company] module ที่บริษัทนี้เปิดใช้งาน (Payroll / Assessment) — คุมจากหน้า Company Management
+  moduleLinks   CompanyModule[]
 }
 
 // ==========================================
@@ -302,9 +305,25 @@ model ImportLog {
 model Module {
   id          Int                @id @default(autoincrement())
   code        String             @unique // "HR", "ASSET" — ใช้ผูกกับ moduleCode ของแต่ละเมนูในโค้ด (layout.tsx)
-  name        String             // ชื่อที่แสดง เช่น "HR", "Assetment"
+  name        String             // ชื่อที่แสดง เช่น "Payroll", "Assessment"
   sortOrder   Int                @default(0)
   access      RoleModuleAccess[]
+
+  // 🌟 [module_company] บริษัทที่เปิดใช้ module นี้
+  companyLinks CompanyModule[]
+}
+
+// 🌟 [module_company] บริษัทไหนเปิดใช้ module ไหนบ้าง (many-to-many)
+// ใช้คุมว่า user ของบริษัทนั้นจะเห็นเมนู/ฟังก์ชันของ module ใดได้บ้าง
+// ถ้าบริษัทเปิดทั้ง 2 module ก็เห็นทั้งหมด
+model CompanyModule {
+  id        Int     @id @default(autoincrement())
+  companyId Int
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  moduleId  Int
+  module    Module  @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, moduleId])
 }
 
 // 🌟 กำหนดว่า role ไหนเข้า module ไหนได้บ้าง (many-to-many ผ่านตารางนี้)

@@ -11,12 +11,35 @@ export async function middleware(req: NextRequest) {
   // 🔒 โซน 1: ป้องกัน API (ป้องกันคนนอกยิง Postman)
   // ==========================================
   if (pathname.startsWith("/api/companies")) {
-    // 🌟 แก้ไข: ให้ทั้ง ADMIN และ HR สามารถจัดการข้อมูลบริษัทได้
-    if (!token || (token.role !== "ADMIN" && token.role !== "HR")) {
+    // 🌟 [module_company] ADMIN / HR / ASSET เรียกได้ แต่ผลลัพธ์ถูกกรองตาม module + เครือบริษัท
+    // ในตัว route เอง (ดู src/app/api/companies/route.ts) — ASSET จะเห็นเฉพาะบริษัทที่เปิด module Assessment
+    const allowedApiRoles = ["ADMIN", "HR", "ASSET"];
+    if (!token || !allowedApiRoles.includes(token.role as string)) {
       return NextResponse.json(
-        { error: "Unauthorized: Access Denied (เฉพาะ ADMIN และ HR เท่านั้น)" },
+        { error: "Unauthorized: Access Denied" },
         { status: 401 },
       );
+    }
+
+    // 🌟 ASSET อ่านได้อย่างเดียว ห้ามสร้าง/แก้ไข/ลบบริษัท (งานนั้นเป็นของ ADMIN/HR)
+    if (token.role === "ASSET" && req.method !== "GET") {
+      return NextResponse.json(
+        { error: "Access Denied: สิทธิ์ Assessment ไม่สามารถแก้ไขข้อมูลบริษัทได้" },
+        { status: 403 },
+      );
+    }
+  }
+
+  // ==========================================
+  // 📦 โซน 4: ฝั่งทรัพย์สิน (/asset/...) — สำหรับ role ASSET (ธีม Employee)
+  // 🌟 [asset_portal] ADMIN เข้าได้ด้วยเพื่อความสะดวกในการตรวจสอบ
+  // ==========================================
+  if (pathname.startsWith("/asset")) {
+    if (!token)
+      return NextResponse.redirect(new URL("/employee/login", req.url));
+
+    if (token.role !== "ASSET" && token.role !== "ADMIN") {
+      return NextResponse.redirect(new URL("/employee/payslips", req.url));
     }
   }
 
@@ -26,6 +49,11 @@ export async function middleware(req: NextRequest) {
   if (pathname.startsWith("/admin")) {
     if (pathname === "/admin/login") return NextResponse.next();
     if (!token) return NextResponse.redirect(new URL("/admin/login", req.url));
+
+    // 🌟 [asset_portal] role ASSET ไม่ใช่ผู้ดูแลระบบ ให้เด้งไปโซน /asset ของตัวเอง
+    if (token.role === "ASSET") {
+      return NextResponse.redirect(new URL("/asset/register", req.url));
+    }
 
     // 🌟 1. อนุญาตให้ทั้ง ADMIN และ HR เข้าใช้งานโซน Admin ได้
     if (token.role !== "ADMIN" && token.role !== "HR") {
@@ -46,6 +74,11 @@ export async function middleware(req: NextRequest) {
     if (pathname === "/employee/login") return NextResponse.next();
     if (!token)
       return NextResponse.redirect(new URL("/employee/login", req.url));
+
+    // 🌟 [asset_portal] role ASSET เห็นเฉพาะเมนู Asset ไม่ต้องเข้าหน้าสลิปเงินเดือน
+    if (token.role === "ASSET") {
+      return NextResponse.redirect(new URL("/asset/register", req.url));
+    }
   }
 
   return NextResponse.next();
@@ -53,5 +86,10 @@ export async function middleware(req: NextRequest) {
 
 // 🌟 อย่าลืมเพิ่ม /api/companies ลงใน matcher ด้วย ยามจะได้ทำงานตรงนี้!
 export const config = {
-  matcher: ["/admin/:path*", "/employee/:path*", "/api/companies/:path*"],
+  matcher: [
+    "/admin/:path*",
+    "/employee/:path*",
+    "/asset/:path*",
+    "/api/companies/:path*",
+  ],
 };

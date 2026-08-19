@@ -17,7 +17,14 @@ interface Company {
   preparedBy?: string | null;
   isActive?: boolean;
   terminatedAt?: string | null;
+  moduleCodes?: string[];
 }
+
+// 🌟 [module_company] module ที่บริษัทเลือกเปิดใช้ได้ (code คงเดิมเพื่อไม่ให้ข้อมูลเดิมพัง)
+const MODULE_OPTIONS = [
+  { code: 'HR', label: 'Payroll' },
+  { code: 'ASSET', label: 'Assessment' },
+];
 
 export default function CompanyManagementPage() {
   return (
@@ -46,6 +53,15 @@ function CompanyManagement() {
     description: '',
     preparedBy: '',
   });
+
+  // 🌟 [module_company] module ที่ติ๊กไว้ในฟอร์มปัจจุบัน
+  const [selectedModules, setSelectedModules] = useState<string[]>([]);
+
+  const toggleModule = (code: string) => {
+    setSelectedModules((prev) =>
+      prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code],
+    );
+  };
 
   const [logoFile, setLogoFile] = useState<File | null>(null);
 
@@ -84,9 +100,11 @@ function CompanyManagement() {
         description: company.description || '',
         preparedBy: company.preparedBy || '',
       });
+      setSelectedModules(company.moduleCodes || []);
     } else {
       setEditingId(null);
       setFormData({ companyCode: '', companyName: '', logoUrl: '', parentId: '', address: '', description: '', preparedBy: '' });
+      setSelectedModules([]);
     }
     setIsModalOpen(true);
   };
@@ -109,6 +127,7 @@ function CompanyManagement() {
     }
     formDataToSend.append('address', formData.address);
     formDataToSend.append('description', formData.description);
+    formDataToSend.append('moduleCodes', JSON.stringify(selectedModules));
 
     if (logoFile) formDataToSend.append('logoFile', logoFile);
 
@@ -357,6 +376,29 @@ function CompanyManagement() {
                   <input type="text" disabled value={formData.preparedBy} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-500 bg-slate-200" />
                 </div>
               )}
+
+              {/* 🌟 [module_company] เลือก module ที่บริษัทนี้เปิดใช้งาน */}
+              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                <label className="mb-3 block text-xs font-bold uppercase tracking-wider text-slate-500">Module ที่เปิดใช้งาน</label>
+                <div className="space-y-2">
+                  {MODULE_OPTIONS.map((mod) => (
+                    <label
+                      key={mod.code}
+                      className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 transition ${modalMode === 'PREVIEW' ? 'cursor-default border-slate-200 bg-slate-50' : 'cursor-pointer border-slate-300 hover:border-blue-400 hover:bg-blue-50/50'}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedModules.includes(mod.code)}
+                        onChange={() => toggleModule(mod.code)}
+                        disabled={modalMode === 'PREVIEW'}
+                        className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                      />
+                      <span className="text-sm font-bold text-slate-700">{mod.label}</span>
+                    </label>
+                  ))}
+                </div>
+                <p className="mt-2 text-xs text-slate-400">ผู้ใช้งานของบริษัทนี้จะเห็นเฉพาะเมนูของ module ที่เปิดไว้ ถ้าเปิดทั้ง 2 จะเห็นทั้งหมด</p>
+              </div>
 
               <div className="rounded-xl border border-slate-200 bg-white p-4 mt-2 shadow-sm">
                 <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500">Hierarchy Level</label>
