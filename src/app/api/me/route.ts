@@ -15,29 +15,41 @@ export async function GET(request: NextRequest) {
 
     const employeeId = token.employeeId as string | undefined;
 
-    // ผู้ใช้บางคน (เช่น admin ที่สร้างจาก setup) อาจไม่มี employee record ผูกอยู่
-    // กรณีนั้นคืนเฉพาะข้อมูลจาก token ไปให้ UI แสดงเท่าที่มี
-    if (!employeeId || employeeId === "undefined" || employeeId === "null") {
-      return NextResponse.json(
-        {
-          profile: null,
-          username: (token as any).username || token.name || null,
-          role: token.role || null,
-        },
-        { status: 200 },
-      );
-    }
+    // 🌟 [asset_redesign] บริษัทที่เข้าถึงได้ในโมดูล Asset (มาจาก membership ไม่ใช่ Employee)
+    // บัญชีฝั่ง Asset จะไม่มี Employee ผูก จึงต้องดึงบริษัทจากตรงนี้แทน
+    const memberships = token.id
+      ? await prisma.assetCompanyMember.findMany({
+          where: { userId: token.id as string },
+          include: {
+            company: { select: { id: true, companyName: true, logoUrl: true } },
+          },
+          orderBy: { createdAt: "asc" },
+        })
+      : [];
 
-    const profile = await prisma.employee.findFirst({
-      where: { id: { equals: employeeId, mode: "insensitive" } },
-      include: { company: true },
-    });
+    const assetCompanies = memberships.map((m) => ({
+      id: m.company.id,
+      companyName: m.company.companyName,
+      logoUrl: m.company.logoUrl,
+      isOwner: m.isOwner,
+    }));
+
+    // ผู้ใช้บางคน (บัญชีฝั่ง Asset หรือ admin ที่สร้างจาก setup) ไม่มี employee record ผูกอยู่
+    // กรณีนั้นคืน profile = null แล้วให้ UI ใช้ username/role/assetCompanies แทน
+    const profile =
+      employeeId && employeeId !== "undefined" && employeeId !== "null"
+        ? await prisma.employee.findFirst({
+            where: { id: { equals: employeeId, mode: "insensitive" } },
+            include: { company: true },
+          })
+        : null;
 
     return NextResponse.json(
       {
         profile,
         username: (token as any).username || token.name || null,
         role: token.role || null,
+        assetCompanies,
       },
       { status: 200 },
     );

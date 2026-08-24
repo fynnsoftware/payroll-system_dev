@@ -28,9 +28,9 @@ export async function GET(request: NextRequest) {
 
     let allowedCompanyIds: number[] | null = null;
 
-    // 🌟 ลอจิกจำกัดสิทธิ์ตามเครือบริษัท — ใช้กฎเดียวกันทั้ง HR และ ASSET
-    // (ADMIN ไม่ถูกจำกัด เห็นทุกบริษัทเสมอ)
-    if ((userRole === "HR" || userRole === "ASSET") && userCompanyId) {
+    // 🌟 ลอจิกจำกัดสิทธิ์ตามเครือบริษัทของ HR (ADMIN ไม่ถูกจำกัด เห็นทุกบริษัทเสมอ)
+    // 🌟 [asset_redesign] role ASSET ไม่ผ่าน endpoint นี้แล้ว ย้ายไปใช้ /api/asset-companies
+    if (userRole === "HR" && userCompanyId) {
       const ownCompany = await prisma.company.findUnique({
         where: { id: userCompanyId },
         select: { id: true, parentId: true },
@@ -77,12 +77,10 @@ export async function GET(request: NextRequest) {
     }));
 
     // 🌟 [module_company] กรองตาม module ที่บริษัทเปิดใช้
-    //   role HR    -> เห็นเฉพาะบริษัทที่เปิด module Payroll (HR)
-    //   role ASSET -> เห็นเฉพาะบริษัทที่เปิด module Assessment (ASSET)
-    //   ADMIN      -> เห็นทั้งหมด ไม่กรอง (จะได้เข้าไปตั้งค่า module ให้บริษัทได้เสมอ)
+    //   role HR -> เห็นเฉพาะบริษัทที่เปิด module Payroll (HR)
+    //   ADMIN   -> เห็นทั้งหมด ไม่กรอง (จะได้เข้าไปตั้งค่า module ให้บริษัทได้เสมอ)
     // ⚠️ sub-company ที่ยังไม่ได้ตั้ง module เอง จะยึดตาม module ของบริษัทแม่
-    const requiredModule =
-      userRole === "HR" ? "HR" : userRole === "ASSET" ? "ASSET" : null;
+    const requiredModule = userRole === "HR" ? "HR" : null;
 
     if (requiredModule) {
       // เตรียม map ของ module ระดับบริษัทแม่ไว้ใช้ fallback (บริษัทแม่อาจไม่ได้อยู่ในผลลัพธ์ที่ดึงมา)

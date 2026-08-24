@@ -1,11 +1,16 @@
 // src/app/api/asset-settings/route.ts
 // 🌟 [phase2asset_#16] ตั้งค่าระดับโมดูล Asset — ตอนนี้มีแค่ nearExpiryWarningDays (ค่าเริ่มต้น 0 = ยังไม่เตือน)
 // เป็น singleton row (id=1) lazy-seed ตอนเรียก GET ครั้งแรกถ้ายังไม่มี
-import { NextResponse } from "next/server";
+import { NextResponse, NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { guard } from "@/lib/apiGuard";
 
-export async function GET() {
+// 🔒 [security] เดิมไม่มีการเช็คสิทธิ์เลย — อ่านได้ทุก role ที่ล็อกอิน แก้ได้เฉพาะ ADMIN
+export async function GET(request: NextRequest) {
   try {
+    const { denied } = await guard(request);
+    if (denied) return denied;
+
     let settings = await prisma.assetModuleSettings.findUnique({ where: { id: 1 } });
     if (!settings) {
       settings = await prisma.assetModuleSettings.create({
@@ -19,8 +24,11 @@ export async function GET() {
   }
 }
 
-export async function PUT(request: Request) {
+export async function PUT(request: NextRequest) {
   try {
+    const { denied } = await guard(request, ["ADMIN"]);
+    if (denied) return denied;
+
     const body = await request.json();
     const days = Number(body.nearExpiryWarningDays);
     if (!Number.isInteger(days) || days < 0) {

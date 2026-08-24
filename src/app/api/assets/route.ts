@@ -1,13 +1,13 @@
 // src/app/api/assets/route.ts
 // 🌟 [Phase 2 - Asset task #19] หน้าจอทะเบียนทรัพย์สิน — CRUD หลัก
-// 🔒 [security_asset] จำกัดขอบเขตตามบริษัทต้นสังกัดแล้ว: อยู่บริษัทแม่เห็นตัวเอง+ลูกในเครือ,
-// อยู่บริษัทลูกเห็นแค่ตัวเอง, ADMIN เห็นทั้งหมด (ดูกฎกลางที่ src/lib/companyScope.ts)
+// 🔒 [asset_redesign] ขอบเขตยึดตาม membership + module ของบริษัท ไม่ใช่เครือบริษัทแล้ว
+// (ดูกฎกลางที่ src/lib/assetScope.ts) ADMIN เห็นและแก้ไขได้ทุกบริษัทเสมอ
 import { NextResponse, NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getToken } from "next-auth/jwt";
 import { calcAssetDepreciation, getFiscalPeriod, DEFAULT_CALC_RULES, CalcRule } from "@/lib/depreciation";
 import { ensureAssetYearsClosed, getFrozenBFForYear } from "@/lib/assetYearClose";
-import { getAllowedCompanyIds, isCompanyAllowed } from "@/lib/companyScope";
+import { getAssetCompanyIds, isAssetCompanyAllowed, explainAssetAccessDenied } from "@/lib/assetScope";
 
 // ==========================================
 // 🟢 GET: ดึงรายการทรัพย์สิน (รองรับ filter บริษัท + group company)
@@ -21,12 +21,12 @@ export async function GET(request: NextRequest) {
     const search = searchParams.get("search");
     const statusFilter = searchParams.get("status"); // ACTIVE | TERMINATED | ALL
 
-    // 🔒 [security_asset] ต้องล็อกอินก่อน และเห็นได้เฉพาะบริษัทในขอบเขตของตัวเองเท่านั้น
+    // 🔒 ต้องล็อกอินก่อน และเห็นได้เฉพาะบริษัทที่เป็นสมาชิก + บริษัทเปิด module Assessment ไว้
     const token = await getToken({ req: request });
     if (!token) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    const allowedCompanyIds = await getAllowedCompanyIds(token);
+    const allowedCompanyIds = await getAssetCompanyIds(token);
 
     const where: any = {};
 
@@ -135,12 +135,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "กรุณากรอกข้อมูลให้ครบถ้วน" }, { status: 400 });
     }
 
-    const allowedCompanyIds = await getAllowedCompanyIds(token);
-    if (!isCompanyAllowed(allowedCompanyIds, Number(companyId))) {
-      return NextResponse.json(
-        { error: "Access Denied: ไม่มีสิทธิ์เพิ่มทรัพย์สินให้บริษัทนี้" },
-        { status: 403 },
-      );
+    const allowedCompanyIds = await getAssetCompanyIds(token);
+    if (!isAssetCompanyAllowed(allowedCompanyIds, Number(companyId))) {
+      // บอกสาเหตุให้ตรงจุด (ไม่ได้เป็นสมาชิก vs บริษัทปิดบริการ) จะได้ไม่งงว่าทำไมทำไม่ได้
+      const reason = await explainAssetAccessDenied(token, Number(companyId));
+      return NextResponse.json({ error: reason }, { status: 403 });
     }
 
     if ((openingAccumDepr && !openingAsOfDate) || (!openingAccumDepr && openingAsOfDate)) {

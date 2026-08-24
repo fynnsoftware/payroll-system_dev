@@ -12,7 +12,7 @@ import { prisma } from "@/lib/prisma";
 import { getToken } from "next-auth/jwt";
 import { calcAssetDepreciation, getFiscalPeriod, DEFAULT_CALC_RULES, CalcRule } from "@/lib/depreciation";
 import { ensureAssetYearsClosed, getFrozenBFForYear } from "@/lib/assetYearClose";
-import { getAllowedCompanyIds, isCompanyAllowed } from "@/lib/companyScope";
+import { getAssetCompanyIds, isAssetCompanyAllowed, explainAssetAccessDenied } from "@/lib/assetScope";
 
 export async function GET(request: NextRequest) {
   try {
@@ -25,17 +25,15 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "กรุณาระบุบริษัท" }, { status: 400 });
     }
 
-    // 🔒 [security_asset] ต้องล็อกอิน และขอรายงานได้เฉพาะบริษัทในขอบเขตของตัวเอง
+    // 🔒 ต้องล็อกอิน และขอรายงานได้เฉพาะบริษัทที่เป็นสมาชิก + บริษัทเปิด module Assessment ไว้
     const token = await getToken({ req: request });
     if (!token) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    const allowedCompanyIds = await getAllowedCompanyIds(token);
-    if (!isCompanyAllowed(allowedCompanyIds, Number(companyId))) {
-      return NextResponse.json(
-        { error: "Access Denied: ไม่มีสิทธิ์ดูรายงานของบริษัทนี้" },
-        { status: 403 },
-      );
+    const allowedCompanyIds = await getAssetCompanyIds(token);
+    if (!isAssetCompanyAllowed(allowedCompanyIds, Number(companyId))) {
+      const reason = await explainAssetAccessDenied(token, Number(companyId));
+      return NextResponse.json({ error: reason }, { status: 403 });
     }
 
     const company = await prisma.company.findUnique({ where: { id: Number(companyId) } });

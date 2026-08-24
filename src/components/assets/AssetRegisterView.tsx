@@ -5,13 +5,15 @@
 // ⚠️ component กลาง ใช้ร่วมกันทั้งฝั่ง /admin/assets (ธีม Admin) และ /asset/register (ธีม Employee)
 // แก้ที่นี่ที่เดียวมีผลทั้งสองฝั่ง — อย่า copy ไปวางซ้ำ
 import React, { useState, useEffect, useMemo } from 'react';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import {
   BiPackage, BiPlus, BiX, BiRefresh, BiCog, BiTrash, BiSearch,
   BiPowerOff, BiCheckShield, BiMap,
 } from 'react-icons/bi';
 import { ToastProvider, useToast } from '@/components/Toast';
 
-interface CompanyOption { id: number; companyName: string; companyCode: string; parentId: number | null; }
+interface CompanyOption { id: number; companyName: string; companyCode: string; parentId?: number | null; }
 interface CategoryOption { id: number; name: string; }
 
 interface Asset {
@@ -64,6 +66,10 @@ export default function AssetRegisterView() {
 
 function AssetRegister() {
   const { showToast } = useToast();
+  // component นี้ถูกใช้ทั้งใน /admin/assets และ /asset/register
+  // ลิงก์ "สร้างบริษัท" ให้ขึ้นเฉพาะฝั่ง /asset เพราะฝั่ง admin จัดการบริษัทที่หน้า Company Management
+  const pathname = usePathname();
+  const isAssetPortal = pathname?.startsWith('/asset') ?? false;
   const [assets, setAssets] = useState<Asset[]>([]);
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [categories, setCategories] = useState<CategoryOption[]>([]);
@@ -95,7 +101,9 @@ function AssetRegister() {
       const qs = searchTerm ? `?search=${encodeURIComponent(searchTerm)}` : '';
       const [assetsRes, companiesRes, categoriesRes] = await Promise.all([
         fetch(`/api/assets${qs}`),
-        fetch('/api/companies'),
+        // 🌟 [asset_redesign] ใช้ทะเบียนบริษัทฝั่ง asset (membership + module Assessment)
+        // ไม่ใช่ /api/companies ของฝั่ง payroll อีกต่อไป
+        fetch('/api/asset-companies'),
         fetch('/api/asset-categories'),
       ]);
       if (assetsRes.ok) setAssets(await assetsRes.json());
@@ -153,6 +161,40 @@ function AssetRegister() {
     const endDate = new Date(purchase.getTime() + totalDays * 86400000);
     return { totalDays, endDate };
   }, [formData.depreciationRatePercent, formData.purchaseDate]);
+
+  // 🌟 [asset_hierarchy] แสดงบริษัทเป็นลำดับชั้น บริษัทแม่ตามด้วยบริษัทลูกที่เยื้องเข้า
+  const renderCompanyOptions = () => {
+    const rendered = new Set<number>();
+    const nodes: React.ReactNode[] = [];
+
+    for (const primary of companies.filter(c => !c.parentId)) {
+      rendered.add(primary.id);
+      nodes.push(
+        <option key={primary.id} value={primary.id} className="font-bold text-slate-800">
+          🏢 {primary.companyName} ({primary.companyCode})
+        </option>,
+      );
+      for (const sub of companies.filter(c => c.parentId === primary.id)) {
+        rendered.add(sub.id);
+        nodes.push(
+          <option key={sub.id} value={sub.id} className="text-slate-600">
+            &nbsp;&nbsp;&nbsp;&nbsp;↳ {sub.companyName} ({sub.companyCode})
+          </option>,
+        );
+      }
+    }
+
+    // บริษัทลูกที่ไม่ได้รับสิทธิ์บริษัทแม่ ต้องยังเลือกได้อยู่
+    for (const orphan of companies.filter(c => !rendered.has(c.id))) {
+      nodes.push(
+        <option key={orphan.id} value={orphan.id} className="text-slate-600">
+          ↳ {orphan.companyName} ({orphan.companyCode})
+        </option>,
+      );
+    }
+
+    return nodes;
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -382,8 +424,29 @@ function AssetRegister() {
                 <label className="mb-1.5 block text-sm font-bold text-slate-700">บริษัท <span className="text-red-500">*</span></label>
                 <select required value={formData.companyId} onChange={e => setFormData({ ...formData, companyId: e.target.value })} disabled={modalMode === 'PREVIEW'} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:ring-blue-50 focus:border-blue-500 disabled:bg-slate-200 disabled:text-slate-500">
                   <option value="">-- เลือกบริษัท --</option>
-                  {companies.map(c => <option key={c.id} value={c.id}>{c.companyName} ({c.companyCode})</option>)}
+                  {renderCompanyOptions()}
                 </select>
+
+                {/* 🌟 บอกทางไปสร้างบริษัท — ฟอร์มนี้เลือกได้เฉพาะบริษัทที่มีสิทธิ์อยู่แล้วเท่านั้น
+                    ถ้าไม่บอกไว้ ผู้ใช้จะติดตรงนี้โดยไม่รู้ว่าต้องไปทำอะไรก่อน */}
+                {modalMode !== 'PREVIEW' && isAssetPortal && (
+                  companies.length === 0 ? (
+                    <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-800">
+                      ยังไม่มีบริษัทให้เลือก —{' '}
+                      <Link href="/asset/company" className="font-black underline hover:text-amber-900">
+                        ไปสร้างบริษัทที่เมนู "Company Management"
+                      </Link>{' '}
+                      ก่อน แล้วกลับมาบันทึกทรัพย์สินอีกครั้ง
+                    </div>
+                  ) : (
+                    <p className="mt-1 text-xs text-slate-400">
+                      ไม่มีบริษัทที่ต้องการ?{' '}
+                      <Link href="/asset/company" className="font-bold text-blue-600 hover:underline">
+                        สร้างบริษัทใหม่
+                      </Link>
+                    </p>
+                  )
+                )}
               </div>
 
               <div>

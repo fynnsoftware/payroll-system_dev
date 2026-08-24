@@ -2,7 +2,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { BiBuilding, BiPlus, BiSubdirectoryRight, BiX, BiRefresh, BiCog, BiTrash, BiSearch, BiImage, BiPowerOff, BiCheckShield, BiErrorCircle } from 'react-icons/bi';
+import { BiBuilding, BiPlus, BiSubdirectoryRight, BiX, BiRefresh, BiCog, BiTrash, BiSearch, BiImage, BiPowerOff, BiCheckShield, BiErrorCircle, BiPackage } from 'react-icons/bi';
 import { ToastProvider, useToast } from '@/components/Toast';
 
 interface Company {
@@ -69,6 +69,48 @@ function CompanyManagement() {
   const [deleteTarget, setDeleteTarget] = useState<Company | null>(null);
   const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // 🌟 [asset_redesign #61] ล้างข้อมูลทรัพย์สินของบริษัท (ใช้ตอนบริษัทเลิกใช้บริการ/เลิกกิจการ)
+  const [purgeTarget, setPurgeTarget] = useState<Company | null>(null);
+  const [purgeSummary, setPurgeSummary] = useState<{ assetCount: number; closeCount: number; memberCount: number } | null>(null);
+  const [purgeConfirmInput, setPurgeConfirmInput] = useState('');
+  const [isPurging, setIsPurging] = useState(false);
+
+  const openPurgeModal = async (company: Company) => {
+    setPurgeTarget(company);
+    setPurgeConfirmInput('');
+    setPurgeSummary(null);
+    try {
+      const res = await fetch(`/api/companies/${company.id}/asset-data`);
+      if (res.ok) setPurgeSummary(await res.json());
+    } catch {
+      showToast('ไม่สามารถดึงข้อมูลสรุปได้', 'error');
+    }
+  };
+
+  const handleConfirmPurge = async () => {
+    if (!purgeTarget) return;
+    setIsPurging(true);
+    try {
+      const res = await fetch(`/api/companies/${purgeTarget.id}/asset-data`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmName: purgeConfirmInput }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showToast(data.message, 'success');
+        setPurgeTarget(null);
+        fetchCompanies();
+      } else {
+        showToast(data.error, 'error');
+      }
+    } catch {
+      showToast('ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้', 'error');
+    } finally {
+      setIsPurging(false);
+    }
+  };
 
   const fetchCompanies = async () => {
     setIsLoading(true);
@@ -225,6 +267,10 @@ function CompanyManagement() {
         >
           {isActive ? <BiPowerOff className="text-lg" /> : <BiCheckShield className="text-lg" />}
         </button>
+        {/* 🌟 ปุ่มล้างข้อมูลทรัพย์สิน แสดงเฉพาะบริษัทที่เปิดโมดูล Assessment ไว้ */}
+        {company.moduleCodes?.includes('ASSET') && (
+          <button onClick={() => openPurgeModal(company)} className="p-2 text-orange-600 bg-orange-50 rounded-lg hover:bg-orange-500 hover:text-white transition shadow-sm" title="ปิดบริการ + ล้างข้อมูลทรัพย์สิน"><BiPackage className="text-lg" /></button>
+        )}
         <button onClick={() => openDeleteModal(company)} className="p-2 text-red-600 bg-red-50 rounded-lg hover:bg-red-600 hover:text-white transition shadow-sm" title="Delete"><BiTrash className="text-lg" /></button>
       </div>
     );
@@ -466,6 +512,56 @@ function CompanyManagement() {
                     {isDeleting ? 'กำลังลบ...' : 'ลบถาวร'}
                   </button>
                 )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🌟 [asset_redesign #61] modal ปิดบริการ + ล้างข้อมูลทรัพย์สิน */}
+      {purgeTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between bg-orange-500 px-6 py-4 text-white">
+              <h3 className="flex items-center text-lg font-bold"><BiPackage className="mr-2 text-xl" /> ปิดบริการทรัพย์สิน</h3>
+              <button onClick={() => setPurgeTarget(null)} className="rounded-full bg-white/20 p-1 transition hover:bg-white/40"><BiX className="text-2xl" /></button>
+            </div>
+            <div className="space-y-4 bg-slate-50 p-6">
+              <div className="rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm text-orange-800">
+                <p className="mb-2 font-bold">การกระทำนี้ไม่สามารถย้อนกลับได้</p>
+                {purgeSummary ? (
+                  <ul className="space-y-1">
+                    <li>• ทรัพย์สิน <span className="font-black">{purgeSummary.assetCount}</span> รายการ จะถูกลบถาวร</li>
+                    <li>• ประวัติปิดงวดค่าเสื่อม <span className="font-black">{purgeSummary.closeCount}</span> รายการ จะถูกลบตาม</li>
+                    <li>• สิทธิ์เข้าถึงของผู้ใช้ <span className="font-black">{purgeSummary.memberCount}</span> คน จะถูกถอน</li>
+                    <li>• โมดูล Assessment ของบริษัทนี้จะถูกปิด</li>
+                  </ul>
+                ) : (
+                  <p className="animate-pulse">กำลังตรวจสอบข้อมูล...</p>
+                )}
+              </div>
+
+              <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800">
+                ข้อมูลพนักงานและเงินเดือนของบริษัทนี้จะ<span className="font-bold">ไม่ถูกแตะต้อง</span> — ล้างเฉพาะส่วนทรัพย์สินเท่านั้น
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-sm font-bold text-slate-700">
+                  พิมพ์ชื่อบริษัท <span className="font-mono text-orange-600">"{purgeTarget.companyName}"</span> เพื่อยืนยัน
+                </label>
+                <input type="text" value={purgeConfirmInput} onChange={e => setPurgeConfirmInput(e.target.value)} placeholder={purgeTarget.companyName} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:border-orange-500 focus:ring-blue-50" />
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button type="button" onClick={() => setPurgeTarget(null)} className="rounded-xl bg-slate-100 px-5 py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-200">ยกเลิก</button>
+                <button
+                  type="button"
+                  disabled={isPurging || purgeConfirmInput !== purgeTarget.companyName}
+                  onClick={handleConfirmPurge}
+                  className={`rounded-xl px-6 py-2.5 text-sm font-bold text-white shadow-md transition ${isPurging || purgeConfirmInput !== purgeTarget.companyName ? 'cursor-not-allowed bg-slate-300' : 'bg-orange-500 hover:bg-orange-600'}`}
+                >
+                  {isPurging ? 'กำลังล้างข้อมูล...' : 'ปิดบริการและล้างข้อมูล'}
+                </button>
               </div>
             </div>
           </div>

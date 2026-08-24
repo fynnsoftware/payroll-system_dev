@@ -1,6 +1,11 @@
 // src/app/api/asset-categories/route.ts
-import { NextResponse } from "next/server";
+import { NextResponse, NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { guard } from "@/lib/apiGuard";
+
+// 🔒 [security] เดิมไม่มีการเช็คสิทธิ์เลย ใครก็เพิ่ม/แก้ master data ได้
+// อ่าน: ทุก role ที่ล็อกอินแล้ว (ฟอร์มทรัพย์สินต้องใช้ทำ dropdown)
+// เขียน: ADMIN เท่านั้น (หน้า Settings ที่จัดการ master data อยู่ในโซน /admin)
 
 // 🌟 [Phase 2 - Asset] ประเภททรัพย์สิน — seed 4 กลุ่มตาม template เดิมแบบ lazy (ครั้งแรกที่เรียก GET ถ้าตารางว่าง)
 // รอ user confirm (phase2asset_#27) ว่าจะให้ตายตัวหรือแก้ไขเองได้ — ตอนนี้เปิด POST ไว้ให้เพิ่มได้
@@ -12,8 +17,11 @@ const DEFAULT_CATEGORIES = [
   "อาคาร",
 ];
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    const { denied } = await guard(request);
+    if (denied) return denied;
+
     let categories = await prisma.assetCategory.findMany({ orderBy: { id: "asc" } });
 
     if (categories.length === 0) {
@@ -31,8 +39,11 @@ export async function GET() {
   }
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
+    const { denied } = await guard(request, ["ADMIN"]);
+    if (denied) return denied;
+
     const body = await request.json();
     const name = (body.name as string)?.trim();
     if (!name) {

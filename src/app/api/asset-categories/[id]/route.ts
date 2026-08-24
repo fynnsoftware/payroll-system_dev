@@ -1,12 +1,17 @@
 // src/app/api/asset-categories/[id]/route.ts
-import { NextResponse } from "next/server";
+import { NextResponse, NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { guard } from "@/lib/apiGuard";
 
+// 🔒 [security] แก้/ลบ master data ได้เฉพาะ ADMIN (เดิมไม่มีการเช็คสิทธิ์เลย)
 export async function PUT(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
+    const { denied } = await guard(request, ["ADMIN"]);
+    if (denied) return denied;
+
     const { id } = await params;
     const body = await request.json();
     const name = (body.name as string)?.trim();
@@ -22,10 +27,13 @@ export async function PUT(
 }
 
 export async function DELETE(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
+    const { denied } = await guard(request, ["ADMIN"]);
+    if (denied) return denied;
+
     const { id } = await params;
     await prisma.assetCategory.delete({ where: { id: Number(id) } });
     return NextResponse.json({ message: "ลบสำเร็จ" }, { status: 200 });

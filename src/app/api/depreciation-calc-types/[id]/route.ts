@@ -1,14 +1,19 @@
 // src/app/api/depreciation-calc-types/[id]/route.ts
-import { NextResponse } from "next/server";
+import { NextResponse, NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { guard } from "@/lib/apiGuard";
 
 // 🟡 PUT: แก้ label / เงื่อนไข / สูตร / ลำดับ / เปิดปิดใช้งาน
 // (isDefault แก้ไม่ได้ผ่าน endpoint นี้ — ต้องมีแถว default เดิมเสมอเพื่อกัน engine ไม่มี fallback)
+// 🔒 [security] ADMIN เท่านั้น เพราะกระทบตัวเลขทางบัญชีในทุกรายงาน
 export async function PUT(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
+    const { denied } = await guard(request, ["ADMIN"]);
+    if (denied) return denied;
+
     const { id } = await params;
     const body = await request.json();
     const { label, conditionType, conditionDescription, formulaType, sortOrder, isActive } = body;
@@ -41,10 +46,13 @@ export async function PUT(
 
 // 🔴 DELETE: ลบได้เฉพาะ rule ที่ไม่ใช่ default
 export async function DELETE(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
+    const { denied } = await guard(request, ["ADMIN"]);
+    if (denied) return denied;
+
     const { id } = await params;
     const existing = await prisma.depreciationCalcType.findUnique({ where: { id: Number(id) } });
     if (!existing) return NextResponse.json({ error: "ไม่พบรายการนี้" }, { status: 404 });

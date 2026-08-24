@@ -1,10 +1,11 @@
 // src/app/api/assets/[id]/route.ts
-// 🔒 [security_asset] ทุก method ต้องเช็คว่าทรัพย์สินชิ้นนี้อยู่ในบริษัทที่ user มีสิทธิ์
-// (กฎกลางอยู่ที่ src/lib/companyScope.ts) กันการเดา id แล้วดู/แก้/ลบข้ามบริษัท
+// 🔒 [asset_redesign] ทุก method ต้องเช็คว่าทรัพย์สินชิ้นนี้อยู่ในบริษัทที่ user มีสิทธิ์
+// (กฎกลางอยู่ที่ src/lib/assetScope.ts — membership + module ของบริษัท)
+// กันการเดา id แล้วดู/แก้/ลบข้ามบริษัท
 import { NextResponse, NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getToken } from "next-auth/jwt";
-import { getAllowedCompanyIds, isCompanyAllowed } from "@/lib/companyScope";
+import { getAssetCompanyIds, isAssetCompanyAllowed, explainAssetAccessDenied } from "@/lib/assetScope";
 
 /**
  * เช็คสิทธิ์กับทรัพย์สินชิ้นหนึ่ง — คืน error response ถ้าไม่ผ่าน, คืน null ถ้าผ่าน
@@ -23,8 +24,8 @@ async function guardAssetAccess(request: NextRequest, assetId: string) {
     return NextResponse.json({ error: "ไม่พบทรัพย์สินนี้" }, { status: 404 });
   }
 
-  const allowed = await getAllowedCompanyIds(token);
-  if (!isCompanyAllowed(allowed, asset.companyId)) {
+  const allowed = await getAssetCompanyIds(token);
+  if (!isAssetCompanyAllowed(allowed, asset.companyId)) {
     // ตอบ 404 แทน 403 เพื่อไม่ให้รู้ว่ามีทรัพย์สิน id นี้อยู่จริงในบริษัทอื่น
     return NextResponse.json({ error: "ไม่พบทรัพย์สินนี้" }, { status: 404 });
   }
@@ -81,10 +82,11 @@ export async function PUT(
     // (ไม่งั้นจะย้ายทรัพย์สินไปซุกบริษัทอื่นที่ตัวเองไม่มีสิทธิ์ได้)
     if (companyId !== undefined) {
       const token = await getToken({ req: request });
-      const allowed = await getAllowedCompanyIds(token);
-      if (!isCompanyAllowed(allowed, Number(companyId))) {
+      const allowed = await getAssetCompanyIds(token);
+      if (!isAssetCompanyAllowed(allowed, Number(companyId))) {
+        const reason = await explainAssetAccessDenied(token, Number(companyId));
         return NextResponse.json(
-          { error: "Access Denied: ไม่มีสิทธิ์ย้ายทรัพย์สินไปบริษัทนี้" },
+          { error: `ย้ายทรัพย์สินไปบริษัทนี้ไม่ได้: ${reason}` },
           { status: 403 },
         );
       }

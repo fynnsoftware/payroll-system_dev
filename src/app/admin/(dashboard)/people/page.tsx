@@ -19,10 +19,12 @@ interface Company {
 //   - module HR (Payroll)      -> เลือก USER / HR ได้
 //   - module ASSET (Assessment)-> เลือก ASSET ได้
 //   - ADMIN                    -> เฉพาะคนที่ล็อกอินเป็น ADMIN เท่านั้นถึงจะสร้างได้
+// 🌟 [asset_redesign] เอาตัวเลือก "Asset Management" ออกจากหน้านี้แล้ว
+// เพราะบัญชีฝั่ง Asset เป็น User ที่ไม่มี Employee ผูก สร้างจากหน้า "บัญชีเข้าระบบ Asset" แทน
+// (หน้านี้สร้าง Employee เสมอ ซึ่งบังคับต้องมี currentCompanyId)
 const ROLE_OPTIONS: { value: string; label: string; requiresModule?: string }[] = [
   { value: 'USER', label: 'Standard User (Employee)', requiresModule: 'HR' },
   { value: 'HR', label: 'Human Resources (HR)', requiresModule: 'HR' },
-  { value: 'ASSET', label: 'Asset Management (Assessment)', requiresModule: 'ASSET' },
   { value: 'ADMIN', label: 'System Administrator' },
 ];
 

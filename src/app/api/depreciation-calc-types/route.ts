@@ -2,12 +2,18 @@
 // 🌟 [Phase 2 - Asset] master data "ประเภทการคำนวณค่าเสื่อมราคา" — แก้ได้ทั้งชื่อและเงื่อนไข/สูตร
 // (เลือกจาก CONDITION_TYPE_OPTIONS / FORMULA_TYPE_OPTIONS ใน src/lib/depreciation.ts เท่านั้น
 // ไม่รับสูตรอิสระ เพื่อความถูกต้องของตัวเลขทางบัญชี)
-import { NextResponse } from "next/server";
+import { NextResponse, NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { DEFAULT_CALC_RULES, CONDITION_TYPE_OPTIONS, FORMULA_TYPE_OPTIONS } from "@/lib/depreciation";
+import { guard } from "@/lib/apiGuard";
 
-export async function GET() {
+// 🔒 [security] เดิมไม่มีการเช็คสิทธิ์เลย ใครก็แก้สูตรคำนวณค่าเสื่อมได้
+// ซึ่งกระทบตัวเลขทางบัญชีในทุกรายงานแบบเงียบๆ — เขียนได้เฉพาะ ADMIN เท่านั้น
+export async function GET(request: NextRequest) {
   try {
+    const { denied } = await guard(request);
+    if (denied) return denied;
+
     let types = await prisma.depreciationCalcType.findMany({ orderBy: { sortOrder: "asc" } });
 
     if (types.length === 0) {
@@ -28,8 +34,11 @@ export async function GET() {
   }
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
+    const { denied } = await guard(request, ["ADMIN"]);
+    if (denied) return denied;
+
     const body = await request.json();
     const { code, label, conditionType, conditionDescription, formulaType, sortOrder } = body;
 

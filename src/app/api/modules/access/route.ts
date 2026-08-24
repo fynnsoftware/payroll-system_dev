@@ -1,10 +1,16 @@
 // src/app/api/modules/access/route.ts
 // 🌟 [RBAC] เปิด/ปิดสิทธิ์ role ต่อ module — ใช้จากหน้า Settings > Role-Module Access
-import { NextResponse } from "next/server";
+import { NextResponse, NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { guard } from "@/lib/apiGuard";
 
-export async function POST(request: Request) {
+// 🔒 [security] เดิมไม่มีการเช็คสิทธิ์เลย ใครก็ยิงเปลี่ยน RBAC matrix ให้ role ตัวเอง
+// เข้าถึงทุก module ได้ — เป็นช่องยกระดับสิทธิ์ที่ร้ายแรงที่สุดในระบบ
+export async function POST(request: NextRequest) {
   try {
+    const { denied } = await guard(request, ["ADMIN"]);
+    if (denied) return denied;
+
     const body = await request.json();
     const { role, moduleCode, allowed } = body;
 

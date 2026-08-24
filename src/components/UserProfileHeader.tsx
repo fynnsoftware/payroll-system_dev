@@ -7,6 +7,13 @@ import { useState, useEffect } from 'react';
 import Image from 'next/image';
 import { useSession } from 'next-auth/react';
 
+interface AssetCompanyBrief {
+  id: number;
+  companyName: string;
+  logoUrl: string | null;
+  isOwner: boolean;
+}
+
 interface MeResponse {
   profile: {
     id: string;
@@ -18,6 +25,8 @@ interface MeResponse {
   } | null;
   username: string | null;
   role: string | null;
+  // 🌟 [asset_redesign] บริษัทที่เข้าถึงได้ในโมดูล Asset (บัญชีฝั่ง Asset ไม่มี Employee ผูก)
+  assetCompanies?: AssetCompanyBrief[];
 }
 
 export default function UserProfileHeader() {
@@ -33,18 +42,24 @@ export default function UserProfileHeader() {
   }, [status]);
 
   const profile = me?.profile;
+  const assetCompanies = me?.assetCompanies ?? [];
 
   // ชื่อที่แสดง: ชื่อเต็มจาก employee -> ชื่อใน session -> username
   const displayName =
     profile?.fullName || session?.user?.name || me?.username || 'Loading...';
 
-  // รหัสพนักงาน: id จาก employee -> employeeId ใน token -> username
+  // 🌟 บัญชีฝั่ง Asset ไม่มี Employee จึงไม่มีรหัสพนักงาน ให้แสดง username แทน
+  const idLabel = profile ? 'EMP ID' : 'บัญชีผู้ใช้';
   const displayEmpId =
-    profile?.id || (session?.user as any)?.employeeId || me?.username || '-';
+    profile?.id || me?.username || (session?.user as any)?.employeeId || '-';
 
-  const logoUrl = profile?.company?.logoUrl
-    ? decodeURIComponent(profile.company.logoUrl)
-    : '/src/logoFynnSoft.jpg';
+  // บริษัทที่จะแสดง: ของ employee ก่อน ถ้าไม่มีใช้บริษัทแรกที่เป็นสมาชิกในโมดูล Asset
+  const companyName =
+    profile?.company?.companyName ||
+    (assetCompanies.length > 0 ? assetCompanies[0].companyName : null);
+
+  const rawLogo = profile?.company?.logoUrl || assetCompanies[0]?.logoUrl || null;
+  const logoUrl = rawLogo ? decodeURIComponent(rawLogo) : '/src/logoFynnSoft.jpg';
 
   return (
     <div className="mb-8 flex items-center justify-between overflow-hidden rounded-2xl bg-gradient-to-br from-blue-600 to-blue-800 p-8 text-white shadow-lg relative">
@@ -72,18 +87,25 @@ export default function UserProfileHeader() {
         <div>
           <h3 className="mb-1 text-2xl font-bold">{displayName}</h3>
           <p className="mb-2 text-blue-100">
-            EMP ID: <span className="font-bold">{displayEmpId}</span> |{' '}
-            {profile?.department || '-'}
+            {idLabel}: <span className="font-bold">{displayEmpId}</span>
+            {profile?.department ? ` | ${profile.department}` : ''}
           </p>
           <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-blue-600">
-            Position: {profile?.position || me?.role || '-'}
+            {profile?.position ? `Position: ${profile.position}` : `สิทธิ์: ${me?.role || '-'}`}
           </span>
         </div>
       </div>
 
       <div className="relative z-10 hidden text-right lg:block">
-        <p className="mb-1 text-sm text-blue-100">Company</p>
-        <h5 className="text-xl font-bold">{profile?.company?.companyName || '-'}</h5>
+        <p className="mb-1 text-sm text-blue-100">
+          {assetCompanies.length > 1 ? 'บริษัทที่ดูแล' : 'Company'}
+        </p>
+        <h5 className="text-xl font-bold">{companyName || '-'}</h5>
+        {assetCompanies.length > 1 && (
+          <p className="mt-1 text-sm text-blue-100">
+            และอีก {assetCompanies.length - 1} บริษัท
+          </p>
+        )}
       </div>
     </div>
   );

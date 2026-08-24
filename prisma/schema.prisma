@@ -24,8 +24,12 @@ model User {
   isActive     Boolean   @default(true)
   
   // ความสัมพันธ์ไปหา Employee (1-to-1)
-  employee     Employee? 
-  
+  // ⚠️ เป็น optional — บัญชีฝั่ง Asset จะไม่มี Employee ผูก (ไม่ใช่พนักงานในระบบ payroll)
+  employee     Employee?
+
+  // 🌟 [asset_redesign] บริษัทฝั่ง asset ที่ user คนนี้เข้าถึงได้
+  assetMemberships AssetCompanyMember[]
+
   createdAt    DateTime  @default(now())
 }
 
@@ -58,6 +62,38 @@ model Company {
 
   // 🌟 [module_company] module ที่บริษัทนี้เปิดใช้งาน (Payroll / Assessment) — คุมจากหน้า Company Management
   moduleLinks   CompanyModule[]
+
+  // 🌟 [asset_redesign] บริษัทนี้ถูกสร้างจากฝั่งไหน "PAYROLL" (หน้า Company Management เดิม)
+  // หรือ "ASSET" (asset user สร้างเองจากโซน /asset) — ใช้แยกที่มาของข้อมูล ไม่ได้ใช้คุมสิทธิ์โดยตรง
+  origin        String    @default("PAYROLL")
+
+  // 🌟 [asset_redesign] สมาชิกฝั่ง asset — ใครเข้าถึงทรัพย์สินของบริษัทนี้ได้บ้าง
+  assetMembers  AssetCompanyMember[]
+}
+
+// 🌟 [asset_redesign] ใครเข้าถึงบริษัทไหนได้บ้างในโมดูล Asset
+//
+// สิทธิ์เข้าถึงทรัพย์สินของบริษัทหนึ่ง ต้องผ่าน 2 ชั้นพร้อมกัน:
+//   1. บริษัทนั้นติ๊ก module Assessment ไว้ (CompanyModule) = บริษัทซื้อบริการแล้ว
+//   2. user มีแถวใน AssetCompanyMember = คนนี้ได้รับสิทธิ์เข้าถึง
+// ADMIN ข้ามทั้งสองชั้น เห็นและแก้ไขได้ทุกบริษัทเสมอ
+//
+// ⚠️ userId ตั้งใจให้เป็น optional + SetNull (ไม่ใช่ Cascade) เพราะตามที่ตกลงไว้
+// ถ้าลบ user เจ้าของทิ้ง ข้อมูลบริษัท/ทรัพย์สินต้องค้างอยู่ ไม่หายตามไปด้วย
+// ระบบจะแสดงเป็น "ไม่มีเจ้าของ" แล้วให้ admin โอนเจ้าของให้คนใหม่แทน
+model AssetCompanyMember {
+  id        Int      @id @default(autoincrement())
+
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  companyId Int
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  isOwner   Boolean  @default(false) // คนสร้างบริษัทนี้ (โอนให้คนอื่นได้)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, companyId])
 }
 
 // ==========================================

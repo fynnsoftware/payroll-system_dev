@@ -17,21 +17,30 @@ const handler = NextAuth({
           throw new Error("กรุณากรอกข้อมูลให้ครบถ้วน");
         }
 
-        // ค้นหา User และดึงข้อมูล Employee ที่เชื่อมโยงกันมาด้วย
-        const user = await prisma.user.findFirst({
-          where: {
-            OR: [
-              { email: credentials.username },
-              { username: credentials.username },
-            ],
-          },
-          include: {
-            employee: true,
-          },
+        // 🔒 ค้นหาด้วย username ก่อนเสมอ ถ้าไม่เจอค่อยลอง email
+        // (เดิมใช้ OR + findFirst ซึ่งถ้า username ของคนหนึ่งไปตรงกับ email ของอีกคน
+        //  จะได้ผลลัพธ์ไม่แน่นอนขึ้นกับลำดับแถวใน DB)
+        let user = await prisma.user.findUnique({
+          where: { username: credentials.username },
+          include: { employee: true },
         });
+
+        if (!user) {
+          user = await prisma.user.findUnique({
+            where: { email: credentials.username },
+            include: { employee: true },
+          });
+        }
 
         if (!user || !user.passwordHash) {
           throw new Error("ไม่พบผู้ใช้งานนี้ในระบบ หรือรหัสผ่านไม่ถูกต้อง");
+        }
+
+        // 🔒 ดักจับบัญชีที่ถูกปิดใช้งานที่ระดับ User
+        // ⚠️ สำคัญ: บัญชีฝั่ง Asset จะไม่มี Employee ผูก ถ้าเช็คแค่ employee.isActive
+        // จะปิดบัญชีกลุ่มนี้ไม่ได้เลย (ยัง login ผ่านตามปกติ)
+        if (user.isActive === false) {
+          throw new Error("บัญชีนี้ถูกปิดการใช้งาน กรุณาติดต่อผู้ดูแลระบบ");
         }
 
         // ดักจับกรณีพนักงานถูกระงับการใช้งาน

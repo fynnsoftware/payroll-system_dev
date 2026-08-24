@@ -1,10 +1,11 @@
 // src/app/api/modules/route.ts
 // 🌟 [RBAC] Module + Role access matrix — ใช้แทน allowedRoles hardcode ใน layout.tsx
 // GET คืนทั้งรายการ module และ access matrix ปัจจุบัน (lazy-seed ถ้ายังไม่มี)
-import { NextResponse } from "next/server";
+import { NextResponse, NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 // 🌟 ใช้นิยาม module ชุดเดียวกับฝั่ง company (source of truth เดียว กัน seed ไม่ตรงกัน)
 import { DEFAULT_MODULES, ensureModulesSeeded } from "@/lib/companyModules";
+import { guard } from "@/lib/apiGuard";
 
 // role เริ่มต้นที่เข้าแต่ละ module ได้ — ADMIN เข้าได้ทุกโมดูลเสมอ (ไม่ผ่าน matrix นี้ เช็คแยกในโค้ด)
 const DEFAULT_ACCESS: { role: string; moduleCode: string }[] = [
@@ -12,8 +13,12 @@ const DEFAULT_ACCESS: { role: string; moduleCode: string }[] = [
   { role: "ASSET", moduleCode: "ASSET" },
 ];
 
-export async function GET() {
+// 🔒 ต้องล็อกอินก่อน (ทุก role เรียกได้ เพราะ sidebar ใช้ตรวจว่าจะโชว์เมนูอะไรบ้าง)
+export async function GET(request: NextRequest) {
   try {
+    const { denied } = await guard(request);
+    if (denied) return denied;
+
     // 🌟 การันตีว่ามีแถว master ครบและชื่อตรงกับ branding ปัจจุบันเสมอ (idempotent)
     await ensureModulesSeeded();
     const modules = await prisma.module.findMany({ orderBy: { sortOrder: "asc" } });

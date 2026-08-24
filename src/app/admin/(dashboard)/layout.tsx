@@ -5,7 +5,7 @@ import { useSession } from "next-auth/react";
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 // 🌟 1. นำเข้า BiHistory สำหรับเมนู Import Log
-import { BiBuilding, BiGroup, BiImport, BiWallet, BiHistory, BiPackage, BiBarChartAlt2, BiCog } from 'react-icons/bi';
+import { BiBuilding, BiGroup, BiImport, BiWallet, BiHistory, BiPackage, BiBarChartAlt2, BiCog, BiCheckShield } from 'react-icons/bi';
 import AutoLogout from '@/components/AutoLogout';
 import LogoutButton from '@/components/LogoutButton';
 import { ReactNode, useEffect, useState } from 'react';
@@ -18,9 +18,13 @@ const MENU_ITEMS = [
   { name: "Import Log", path: "/admin/import-log", icon: BiHistory, allowedRoles: ["ADMIN"], moduleCode: "HR" },
   { name: "Salary Summary", path: "/admin/summary", icon: BiWallet, allowedRoles: ["ADMIN"], moduleCode: "HR" },
   // 🌟 [Phase 2 - Asset]
-  { name: "Asset Register", path: "/admin/assets", icon: BiPackage, allowedRoles: ["ADMIN", "HR", "ASSET"], moduleCode: "ASSET" },
-  { name: "Asset Report", path: "/admin/assets-report", icon: BiBarChartAlt2, allowedRoles: ["ADMIN", "HR", "ASSET"], moduleCode: "ASSET" },
-  { name: "Settings", path: "/admin/settings", icon: BiCog, allowedRoles: ["ADMIN", "ASSET"], moduleCode: "ASSET" },
+  // 🌟 [asset_redesign] โมดูล Asset เป็นของ ADMIN เท่านั้นในฝั่งนี้
+  //   - role ASSET ถูกเด้งไปโซน /asset (ธีมผู้ใช้งาน) แล้ว
+  //   - role HR ไม่เกี่ยวกับงานทรัพย์สินเลย จึงไม่เห็นทั้งหมวด
+  { name: "Asset Register", path: "/admin/assets", icon: BiPackage, allowedRoles: ["ADMIN"], moduleCode: "ASSET" },
+  { name: "Asset Report", path: "/admin/assets-report", icon: BiBarChartAlt2, allowedRoles: ["ADMIN"], moduleCode: "ASSET" },
+  { name: "Asset User Access", path: "/admin/asset-accounts", icon: BiCheckShield, allowedRoles: ["ADMIN"], moduleCode: "ASSET" },
+  { name: "Settings", path: "/admin/settings", icon: BiCog, allowedRoles: ["ADMIN"], moduleCode: "ASSET" },
 ];
 
 const MODULE_LABELS: Record<string, string> = { HR: "Payroll", ASSET: "Assessment" };

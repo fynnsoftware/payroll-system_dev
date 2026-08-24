@@ -11,21 +11,13 @@ export async function middleware(req: NextRequest) {
   // 🔒 โซน 1: ป้องกัน API (ป้องกันคนนอกยิง Postman)
   // ==========================================
   if (pathname.startsWith("/api/companies")) {
-    // 🌟 [module_company] ADMIN / HR / ASSET เรียกได้ แต่ผลลัพธ์ถูกกรองตาม module + เครือบริษัท
-    // ในตัว route เอง (ดู src/app/api/companies/route.ts) — ASSET จะเห็นเฉพาะบริษัทที่เปิด module Assessment
-    const allowedApiRoles = ["ADMIN", "HR", "ASSET"];
-    if (!token || !allowedApiRoles.includes(token.role as string)) {
+    // 🌟 [asset_redesign] เฉพาะ ADMIN และ HR เท่านั้น
+    // role ASSET ถูกถอนสิทธิ์ออกแล้ว เพราะย้ายไปใช้ /api/asset-companies ซึ่งกรองตาม
+    // membership + module Assessment แทน (ถ้ายังเปิดไว้จะเหลือช่องมองข้อมูลบริษัทฝั่ง payroll)
+    if (!token || (token.role !== "ADMIN" && token.role !== "HR")) {
       return NextResponse.json(
-        { error: "Unauthorized: Access Denied" },
+        { error: "Unauthorized: Access Denied (เฉพาะ ADMIN และ HR เท่านั้น)" },
         { status: 401 },
-      );
-    }
-
-    // 🌟 ASSET อ่านได้อย่างเดียว ห้ามสร้าง/แก้ไข/ลบบริษัท (งานนั้นเป็นของ ADMIN/HR)
-    if (token.role === "ASSET" && req.method !== "GET") {
-      return NextResponse.json(
-        { error: "Access Denied: สิทธิ์ Assessment ไม่สามารถแก้ไขข้อมูลบริษัทได้" },
-        { status: 403 },
       );
     }
   }
@@ -63,6 +55,21 @@ export async function middleware(req: NextRequest) {
     // 🌟 2. (โบนัสความปลอดภัย) ดักไม่ให้ HR พิมพ์ URL แอบเข้าหน้า Summary (เพราะหน้านี้สงวนให้ ADMIN)
     if (pathname.startsWith("/admin/summary") && token.role !== "ADMIN") {
       // ถ้าเป็น HR แอบเข้ามา จะเด้งกลับไปหน้า Company ให้เอง
+      return NextResponse.redirect(new URL("/admin/company", req.url));
+    }
+
+    // 🌟 3. [asset_redesign] โมดูล Asset สงวนให้ ADMIN เท่านั้นในโซนนี้
+    // HR ไม่เห็นเมนูอยู่แล้ว แต่ต้องกันการพิมพ์ URL ตรงด้วย ไม่งั้นเป็นแค่การซ่อนเมนูเปล่าๆ
+    const adminAssetPaths = [
+      "/admin/assets",
+      "/admin/assets-report",
+      "/admin/asset-accounts",
+      "/admin/settings",
+    ];
+    if (
+      token.role !== "ADMIN" &&
+      adminAssetPaths.some((p) => pathname.startsWith(p))
+    ) {
       return NextResponse.redirect(new URL("/admin/company", req.url));
     }
   }

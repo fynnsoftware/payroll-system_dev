@@ -8,7 +8,8 @@ import React, { useState, useEffect } from 'react';
 import { BiBarChartAlt2, BiRefresh, BiBuilding, BiX, BiListUl, BiTable } from 'react-icons/bi';
 import { ToastProvider, useToast } from '@/components/Toast';
 
-interface CompanyOption { id: number; companyName: string; companyCode: string; parentId: number | null; }
+// 🌟 [asset_hierarchy] ทะเบียนบริษัทฝั่ง asset รองรับโครงสร้างแม่-ลูก 2 ชั้นแล้ว
+interface CompanyOption { id: number; companyName: string; companyCode: string; parentId?: number | null; }
 
 interface DetailRow {
   assetCode: string;
@@ -68,10 +69,11 @@ function AssetReport() {
   const [selectedRow, setSelectedRow] = useState<DetailRow | null>(null);
 
   useEffect(() => {
-    fetch('/api/companies').then(res => res.ok ? res.json() : []).then((data: CompanyOption[]) => {
+    // 🌟 [asset_redesign] ใช้ทะเบียนบริษัทฝั่ง asset แทน /api/companies ของฝั่ง payroll
+    fetch('/api/asset-companies').then(res => res.ok ? res.json() : []).then((data: CompanyOption[]) => {
       setCompanies(data);
-      const primary = data.find(c => c.parentId === null);
-      if (primary) setCompanyId(String(primary.id));
+      // เลือกบริษัทแรกที่เข้าถึงได้ให้อัตโนมัติ
+      if (data.length > 0) setCompanyId(String(data[0].id));
     });
   }, []);
 
@@ -96,8 +98,6 @@ function AssetReport() {
 
   useEffect(() => { if (companyId) runReport(); /* eslint-disable-next-line */ }, [companyId]);
 
-  const primaryCompanies = companies.filter(c => c.parentId === null);
-
   return (
     // ⚠️ padding/พื้นหลัง ปล่อยให้ layout ที่ครอบอยู่จัดการ (ดูหมายเหตุใน AssetRegisterView)
     <div className="mx-auto max-w-7xl animate-in fade-in duration-500">
@@ -118,14 +118,32 @@ function AssetReport() {
           <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500">บริษัท</label>
           <select value={companyId} onChange={e => setCompanyId(e.target.value)} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-bold text-slate-700 outline-none focus:ring-blue-50 focus:border-blue-500">
             <option value="">-- เลือกบริษัท --</option>
-            {primaryCompanies.map(c => <option key={c.id} value={c.id}>{c.companyName}</option>)}
+            {(() => {
+              // 🌟 [asset_hierarchy] แสดงเป็นลำดับชั้น บริษัทแม่ตามด้วยบริษัทลูก
+              const rendered = new Set<number>();
+              const nodes: React.ReactNode[] = [];
+              for (const primary of companies.filter(c => !c.parentId)) {
+                rendered.add(primary.id);
+                nodes.push(<option key={primary.id} value={primary.id} className="font-bold">🏢 {primary.companyName}</option>);
+                for (const sub of companies.filter(c => c.parentId === primary.id)) {
+                  rendered.add(sub.id);
+                  nodes.push(<option key={sub.id} value={sub.id}>&nbsp;&nbsp;&nbsp;&nbsp;↳ {sub.companyName}</option>);
+                }
+              }
+              for (const orphan of companies.filter(c => !rendered.has(c.id))) {
+                nodes.push(<option key={orphan.id} value={orphan.id}>↳ {orphan.companyName}</option>);
+              }
+              return nodes;
+            })()}
           </select>
         </div>
         <div>
           <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500">รอบปี (Fiscal Year)</label>
           <input type="number" value={year} onChange={e => setYear(Number(e.target.value))} className="w-32 rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-bold text-slate-700 outline-none focus:ring-blue-50 focus:border-blue-500" />
         </div>
-        <label className="flex items-center gap-2 text-sm font-bold text-slate-600 pb-2.5 cursor-pointer">
+        {/* 🌟 [asset_hierarchy] รวมบริษัทลูก — นับเฉพาะบริษัทลูกที่ผู้ใช้มีสิทธิ์เข้าถึงเท่านั้น
+            (backend กรองด้วย assetScope อีกชั้น การเป็นสมาชิกบริษัทแม่ไม่ได้เห็นลูกอัตโนมัติ) */}
+        <label className="flex cursor-pointer items-center gap-2 pb-2.5 text-sm font-bold text-slate-600">
           <input type="checkbox" checked={includeSub} onChange={e => setIncludeSub(e.target.checked)} className="h-4 w-4 rounded border-slate-300" />
           รวมบริษัทลูกในเครือ (Group Company)
         </label>
