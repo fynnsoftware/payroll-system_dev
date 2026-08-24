@@ -92,9 +92,36 @@ export async function PUT(
       }
     }
 
-    // ⚠️ ข้อควรระวัง: ถ้าทรัพย์สินตัวนี้เคยถูกปิดงวด (AssetYearlyClose) ไปแล้ว การแก้ cost/rate/
-    // purchaseDate/openingAccumDepr ตรงนี้จะไม่ retroactive ไปแก้ตัวเลขปีที่ปิดไปแล้ว (ตามหลัก
-    // immutable) แต่จะกระทบแค่การคำนวณปีถัดจากปีที่ปิดล่าสุดเป็นต้นไป ยังไม่ได้ทำ UI เตือนจุดนี้
+    // 🐛 [bug] ถ้าแก้ "ตัวตั้งต้นของการคำนวณ" (ราคาทุน / อัตราค่าเสื่อม / วันที่ซื้อ / ยอดยกมา)
+    // ต้องล้างประวัติปิดงวดเดิมทิ้ง แล้วให้ระบบคำนวณใหม่
+    //
+    // อาการที่เจอ: สร้างทรัพย์สินด้วยวันที่ซื้อปี 2015 -> ระบบปิดงวดปี 2015-2025 ให้อัตโนมัติ
+    // และบันทึกว่าเสื่อมครบแล้ว (accumDeprCF = ราคาทุน - 1) พอแก้วันที่ซื้อเป็นปี 2026
+    // ตัวคำนวณยังไปหยิบยอดยกมาจากแถวปิดงวดปี 2025 เดิมมาใช้ ทำให้ NBV = 1 ค้างอยู่
+    // และขึ้น badge "หมดอายุ" ทั้งที่เพิ่งซื้อ
+    //
+    // เดิมตั้งใจให้แถวปิดงวด immutable แต่มันสมเหตุสมผลเฉพาะตอนที่ "ข้อมูลตั้งต้นไม่เปลี่ยน"
+    // พอตัวตั้งต้นเปลี่ยน ประวัติที่คำนวณจากของเก่าก็ผิดไปด้วย ต้องสร้างใหม่ทั้งชุด
+    // (ปลอดภัยเพราะแถวพวกนี้ระบบสร้างเองอัตโนมัติ closedBy = "SYSTEM (Auto)" ไม่ใช่ที่คนอนุมัติ)
+    const existing = await prisma.asset.findUnique({ where: { id } });
+    if (existing) {
+      const changedCalcBasis =
+        (cost !== undefined && Number(cost) !== Number(existing.cost)) ||
+        (depreciationRate !== undefined &&
+          Number(depreciationRate) !== Number(existing.depreciationRate)) ||
+        (purchaseDate !== undefined &&
+          new Date(purchaseDate).getTime() !== existing.purchaseDate.getTime()) ||
+        (openingAccumDepr !== undefined &&
+          Number(openingAccumDepr || 0) !== Number(existing.openingAccumDepr || 0)) ||
+        (openingAsOfDate !== undefined &&
+          (openingAsOfDate ? new Date(openingAsOfDate).getTime() : null) !==
+            (existing.openingAsOfDate ? existing.openingAsOfDate.getTime() : null));
+
+      if (changedCalcBasis) {
+        await prisma.assetYearlyClose.deleteMany({ where: { assetId: id } });
+      }
+    }
+
     const updated = await prisma.asset.update({
       where: { id },
       data: {

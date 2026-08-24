@@ -9,9 +9,12 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   BiPackage, BiPlus, BiX, BiRefresh, BiCog, BiTrash, BiSearch,
-  BiPowerOff, BiCheckShield, BiMap,
+  BiPowerOff, BiCheckShield, BiMap, BiFilter, BiCopy, BiInfoCircle, BiErrorCircle,
 } from 'react-icons/bi';
 import { ToastProvider, useToast } from '@/components/Toast';
+import { formatDate } from '@/lib/formatDate';
+import { generateAssetCodes } from '@/lib/assetCode';
+import { calcAssetDepreciation, getFiscalPeriod, CalcRule } from '@/lib/depreciation';
 
 interface CompanyOption { id: number; companyName: string; companyCode: string; parentId?: number | null; }
 interface CategoryOption { id: number; name: string; }
@@ -43,6 +46,17 @@ const DEPRECIATION_PRESETS = [
   { years: 20, percent: 5 },
 ];
 
+// 🌟 [rounding] ปัดเป็นทศนิยม 2 ตำแหน่งสำหรับช่องกรอกตัวเลข
+//
+// ⚠️ จำเป็นเพราะค่าที่ดึงจาก DB เป็น Decimal ที่มีทศนิยมยาว (เช่น ค่าเสื่อมสะสม 6145.753424657534)
+// แต่ input step="0.01" ยอมรับได้แค่ 2 ตำแหน่ง ถ้าใส่ค่าดิบลงไป browser จะขึ้น
+// "โปรดป้อนค่าที่ถูกต้อง ค่าใกล้เคียงที่ถูกต้องสองรายการคือ..." แล้วกดบันทึกไม่ได้
+const round2 = (value: unknown): string => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '';
+  return String(Math.round(n * 100) / 100);
+};
+
 const emptyForm = {
   assetCode: '',
   companyId: '',
@@ -73,8 +87,15 @@ function AssetRegister() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [categories, setCategories] = useState<CategoryOption[]>([]);
+  // 🌟 [calc_type] กฎการคำนวณค่าเสื่อม (master data) — โหลดมาเพื่อ preview ว่าทรัพย์สินนี้จะเข้าเงื่อนไขไหน
+  const [calcRules, setCalcRules] = useState<CalcRule[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState('');
+
+  // 🌟 [filter] ตัวกรองรายการทรัพย์สิน
+  const [filterCompanyId, setFilterCompanyId] = useState('');
+  const [filterCategoryId, setFilterCategoryId] = useState('');
+  const [filterStatus, setFilterStatus] = useState(''); // '' = ทั้งหมด | ACTIVE | TERMINATED
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<'CREATE' | 'EDIT' | 'PREVIEW'>('CREATE');
@@ -83,6 +104,8 @@ function AssetRegister() {
   const [formData, setFormData] = useState(emptyForm);
   // 🌟 โหมดการกรอกอัตราค่าเสื่อม: '' = ยังไม่เลือก, '3'/'5'/'10' = เลือกจากอายุการใช้งาน, 'CUSTOM' = ระบุ % เอง
   const [rateMode, setRateMode] = useState('');
+  // 🌟 [asset_duplicate] จำนวนรายการที่จะสร้างพร้อมกัน (ใช้เฉพาะโหมด CREATE)
+  const [quantity, setQuantity] = useState('1');
 
   const handleRateModeChange = (mode: string) => {
     setRateMode(mode);
@@ -95,20 +118,38 @@ function AssetRegister() {
     // mode === 'CUSTOM' -> คงค่าเดิมไว้ให้ผู้ใช้แก้เอง
   };
 
-  const fetchAll = async (searchTerm?: string) => {
+  // 🌟 [filter] ส่ง filter ไปกรองที่ฝั่ง server (API รองรับ companyId/categoryId/status อยู่แล้ว)
+  // ไม่กรองใน client เพราะรายการอาจยาวและอนาคตจะมี pagination
+  const fetchAll = async (overrides?: { search?: string; companyId?: string; categoryId?: string; status?: string }) => {
     setIsLoading(true);
     try {
-      const qs = searchTerm ? `?search=${encodeURIComponent(searchTerm)}` : '';
-      const [assetsRes, companiesRes, categoriesRes] = await Promise.all([
+      const params = new URLSearchParams();
+      const s = overrides?.search ?? search;
+      const c = overrides?.companyId ?? filterCompanyId;
+      const cat = overrides?.categoryId ?? filterCategoryId;
+      const st = overrides?.status ?? filterStatus;
+
+      if (s) params.set('search', s);
+      if (c) params.set('companyId', c);
+      if (cat) params.set('categoryId', cat);
+      if (st) params.set('status', st);
+
+      const qs = params.toString() ? `?${params.toString()}` : '';
+      const [assetsRes, companiesRes, categoriesRes, calcTypesRes] = await Promise.all([
         fetch(`/api/assets${qs}`),
         // 🌟 [asset_redesign] ใช้ทะเบียนบริษัทฝั่ง asset (membership + module Assessment)
         // ไม่ใช่ /api/companies ของฝั่ง payroll อีกต่อไป
         fetch('/api/asset-companies'),
         fetch('/api/asset-categories'),
+        fetch('/api/depreciation-calc-types'),
       ]);
       if (assetsRes.ok) setAssets(await assetsRes.json());
       if (companiesRes.ok) setCompanies(await companiesRes.json());
       if (categoriesRes.ok) setCategories(await categoriesRes.json());
+      if (calcTypesRes.ok) {
+        const data = await calcTypesRes.json();
+        setCalcRules(data.types || []);
+      }
     } catch (error) {
       showToast('ไม่สามารถโหลดข้อมูลได้', 'error');
     } finally {
@@ -120,7 +161,7 @@ function AssetRegister() {
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    fetchAll(search);
+    fetchAll();
   };
 
   const openModal = (mode: 'CREATE' | 'EDIT' | 'PREVIEW', asset?: Asset) => {
@@ -133,10 +174,10 @@ function AssetRegister() {
         categoryId: String(asset.categoryId),
         description: asset.description,
         location: asset.location || '',
-        cost: String(asset.cost),
-        depreciationRatePercent: String(Number(asset.depreciationRate) * 100),
+        cost: round2(asset.cost),
+        depreciationRatePercent: round2(Number(asset.depreciationRate) * 100),
         purchaseDate: asset.purchaseDate.slice(0, 10),
-        openingAccumDepr: asset.openingAccumDepr != null ? String(asset.openingAccumDepr) : '',
+        openingAccumDepr: asset.openingAccumDepr != null ? round2(asset.openingAccumDepr) : '',
         openingAsOfDate: asset.openingAsOfDate ? asset.openingAsOfDate.slice(0, 10) : '',
       });
 
@@ -149,6 +190,31 @@ function AssetRegister() {
       setFormData(emptyForm);
       setRateMode('');
     }
+    setQuantity('1'); // รีเซ็ตจำนวนทุกครั้งที่เปิดฟอร์ม กันเผลอสร้างซ้ำจากค่าค้าง
+    setIsModalOpen(true);
+  };
+
+  // 🌟 [asset_duplicate] ทำซ้ำรายการ — เปิดฟอร์มสร้างใหม่พร้อมข้อมูลเดิมทั้งหมด
+  // ผู้ใช้แค่ระบุจำนวนแล้วกดสร้าง ระบบรันรหัสต่อให้เอง
+  const openDuplicate = (asset: Asset) => {
+    setModalMode('CREATE');
+    setEditingId(null);
+    setFormData({
+      assetCode: asset.assetCode, // ใช้เป็นรหัสตั้งต้น ระบบจะข้ามไปตัวว่างถัดไปให้
+      companyId: String(asset.companyId),
+      categoryId: String(asset.categoryId),
+      description: asset.description,
+      location: asset.location || '',
+      cost: round2(asset.cost),
+      depreciationRatePercent: round2(Number(asset.depreciationRate) * 100),
+      purchaseDate: asset.purchaseDate.slice(0, 10),
+      openingAccumDepr: '',
+      openingAsOfDate: '',
+    });
+    const pct = Number(asset.depreciationRate) * 100;
+    const matched = DEPRECIATION_PRESETS.find(p => Math.abs(p.percent - pct) < 0.005);
+    setRateMode(matched ? String(matched.years) : 'CUSTOM');
+    setQuantity('1');
     setIsModalOpen(true);
   };
 
@@ -161,6 +227,75 @@ function AssetRegister() {
     const endDate = new Date(purchase.getTime() + totalDays * 86400000);
     return { totalDays, endDate };
   }, [formData.depreciationRatePercent, formData.purchaseDate]);
+
+  // 🌟 [validation] ตรวจความสมเหตุสมผลของยอดยกมา — คืนข้อความเตือน หรือ null ถ้าไม่มีปัญหา
+  //
+  // เคสที่เจอจริง: กรอกยอดยกมา ณ 31/12/2025 แต่วันที่ซื้อคือ 05/05/2026
+  // engine จะยึด openingAsOfDate เป็นฐานคำนวณ ทำให้ทรัพย์สินที่เพิ่งซื้อกลายเป็นเสื่อมครบทันที
+  // (NBV = 1 บาท) โดยไม่มีอะไรฟ้อง จึงต้องเตือนตั้งแต่ตอนกรอก
+  const openingWarning = useMemo(() => {
+    if (!formData.openingAccumDepr && !formData.openingAsOfDate) return null;
+
+    if (formData.openingAsOfDate && formData.purchaseDate) {
+      if (new Date(formData.openingAsOfDate) < new Date(formData.purchaseDate)) {
+        return 'วันที่ของยอดยกมาอยู่ก่อนวันที่ซื้อ ซึ่งเป็นไปไม่ได้ — ระบบจะคำนวณค่าเสื่อมผิด กรุณาตรวจสอบวันที่อีกครั้ง';
+      }
+    }
+
+    const opening = Number(formData.openingAccumDepr);
+    const cost = Number(formData.cost);
+    if (opening && cost && opening > cost) {
+      return 'ค่าเสื่อมสะสมยกมามากกว่าราคาทรัพย์สิน กรุณาตรวจสอบตัวเลขอีกครั้ง';
+    }
+
+    return null;
+  }, [formData.openingAccumDepr, formData.openingAsOfDate, formData.purchaseDate, formData.cost]);
+
+  // 🌟 [calc_type] ประเภทการคำนวณค่าเสื่อมราคาของงวดปีปัจจุบัน
+  //
+  // ⚠️ ค่านี้ "กรอกเองไม่ได้โดยตั้งใจ" เพราะมันไม่ใช่คุณสมบัติของทรัพย์สิน แต่เป็นผลของ
+  // (ทรัพย์สิน × งวดบัญชี) — ของชิ้นเดียวกันจะเปลี่ยนประเภทไปเรื่อยๆ ตามปี เช่น
+  //   ปีที่ซื้อ -> "ซื้อระหว่างปี" | ปีถัดมา -> "คิดค่าเสื่อมราคาเต็มปี" | ปีที่ครบอายุ -> "หมดในระหว่างปี"
+  // ถ้าให้กรอกค้างไว้ทีเดียว ตัวเลขในรายงานปีถัดไปจะผิดทันที จึงให้ engine ตัดสินตามเงื่อนไขทุกครั้งที่ออกรายงาน
+  // ตรงนี้แสดงเป็นข้อมูลอ่านอย่างเดียวว่า "ปีนี้จะเข้าเงื่อนไขไหน"
+  const calcTypePreview = useMemo(() => {
+    const rate = Number(formData.depreciationRatePercent) / 100;
+    if (!rate || rate <= 0 || !formData.purchaseDate || !formData.cost || calcRules.length === 0) {
+      return null;
+    }
+    try {
+      const currentYear = new Date().getUTCFullYear();
+      const result = calcAssetDepreciation(
+        {
+          cost: Number(formData.cost),
+          depreciationRate: rate,
+          purchaseDate: new Date(formData.purchaseDate),
+          openingAccumDepr: formData.openingAccumDepr ? Number(formData.openingAccumDepr) : null,
+          openingAsOfDate: formData.openingAsOfDate ? new Date(formData.openingAsOfDate) : null,
+        },
+        getFiscalPeriod(currentYear),
+        calcRules,
+      );
+      return { year: currentYear, label: result.calcTypeLabel, condition: result.conditionDescription };
+    } catch {
+      return null;
+    }
+  }, [
+    formData.depreciationRatePercent, formData.purchaseDate, formData.cost,
+    formData.openingAccumDepr, formData.openingAsOfDate, calcRules,
+  ]);
+
+  // 🌟 [asset_duplicate] ตัวอย่างรหัสที่จะถูกสร้าง (คำนวณฝั่ง client เพื่อดูก่อนกดบันทึก)
+  // ⚠️ เป็นแค่ preview — ตัวจริงที่ใช้บันทึกคำนวณใหม่ที่ฝั่ง server พร้อมข้ามรหัสที่ถูกใช้ไปแล้ว
+  // จึงอาจไม่ตรงกับที่แสดงตรงนี้ถ้ามีรหัสซ้ำอยู่ในระบบ
+  const codePreview = useMemo(() => {
+    const qty = Math.max(1, Math.min(50, Number(quantity) || 1));
+    if (!formData.assetCode.trim() || qty < 2) return '';
+    const codes = generateAssetCodes(formData.assetCode, qty, new Set());
+    return codes.length <= 3
+      ? codes.join(', ')
+      : `${codes[0]}, ${codes[1]} ... ${codes[codes.length - 1]}`;
+  }, [formData.assetCode, quantity]);
 
   // 🌟 [asset_hierarchy] แสดงบริษัทเป็นลำดับชั้น บริษัทแม่ตามด้วยบริษัทลูกที่เยื้องเข้า
   const renderCompanyOptions = () => {
@@ -226,13 +361,21 @@ function AssetRegister() {
           purchaseDate: formData.purchaseDate,
           openingAccumDepr: formData.openingAccumDepr === '' ? null : formData.openingAccumDepr,
           openingAsOfDate: formData.openingAsOfDate === '' ? null : formData.openingAsOfDate,
+          // ส่งจำนวนเฉพาะตอนสร้างใหม่ (โหมดแก้ไขไม่มีการทำซ้ำ)
+          ...(modalMode === 'CREATE' ? { quantity: Number(quantity) || 1 } : {}),
         }),
       });
 
       if (res.ok) {
-        showToast(modalMode === 'EDIT' ? 'อัปเดตทรัพย์สินสำเร็จ!' : 'บันทึกทรัพย์สินสำเร็จ!', 'success');
+        const data = await res.json().catch(() => ({}));
+        showToast(
+          modalMode === 'EDIT'
+            ? 'อัปเดตทรัพย์สินสำเร็จ!'
+            : data.message || 'บันทึกทรัพย์สินสำเร็จ!',
+          'success',
+        );
         setIsModalOpen(false);
-        fetchAll(search);
+        fetchAll();
       } else {
         const errData = await res.json();
         showToast(`เกิดข้อผิดพลาด: ${errData.error}`, 'error');
@@ -255,7 +398,7 @@ function AssetRegister() {
       });
       if (res.ok) {
         showToast(`${action}ทรัพย์สินสำเร็จ!`, 'success');
-        fetchAll(search);
+        fetchAll();
       } else {
         const errData = await res.json();
         showToast(`ดำเนินการไม่สำเร็จ: ${errData.error}`, 'error');
@@ -271,7 +414,7 @@ function AssetRegister() {
       const res = await fetch(`/api/assets/${asset.id}`, { method: 'DELETE' });
       if (res.ok) {
         showToast('ลบทรัพย์สินสำเร็จ!', 'success');
-        fetchAll(search);
+        fetchAll();
       } else {
         const errData = await res.json();
         showToast(`ลบไม่สำเร็จ: ${errData.error}`, 'error');
@@ -299,7 +442,7 @@ function AssetRegister() {
           </div>
         </div>
         <div className="flex shrink-0 gap-2">
-          <button onClick={() => fetchAll(search)} className="flex items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-50" title="Refresh"><BiRefresh className="mr-2 text-lg" /> Refresh</button>
+          <button onClick={() => fetchAll()} className="flex items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-50" title="Refresh"><BiRefresh className="mr-2 text-lg" /> Refresh</button>
           <button onClick={() => openModal('CREATE')} className="flex items-center justify-center rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-700"><BiPlus className="mr-2 text-xl" /> New Asset</button>
         </div>
       </div>
@@ -317,6 +460,62 @@ function AssetRegister() {
         </div>
         <button type="submit" className="rounded-xl bg-blue-600 hover:bg-blue-700 px-6 py-2.5 text-sm font-bold text-white shadow-sm transition">ค้นหา</button>
       </form>
+
+      {/* 🌟 [filter] ตัวกรอง — เลือกแล้วโหลดใหม่ทันที ไม่ต้องกดปุ่มค้นหาซ้ำ */}
+      <div className="mb-5 flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex items-center gap-1.5 pb-2 text-xs font-bold uppercase tracking-wider text-slate-500">
+          <BiFilter className="text-lg" /> ตัวกรอง
+        </div>
+
+        <div className="min-w-[200px] flex-1">
+          <label className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-slate-500">บริษัท</label>
+          <select
+            value={filterCompanyId}
+            onChange={(e) => { setFilterCompanyId(e.target.value); fetchAll({ companyId: e.target.value }); }}
+            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 outline-none focus:ring-blue-50 focus:border-blue-500"
+          >
+            <option value="">ทุกบริษัท</option>
+            {renderCompanyOptions()}
+          </select>
+        </div>
+
+        <div className="min-w-[180px] flex-1">
+          <label className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-slate-500">ประเภททรัพย์สิน</label>
+          <select
+            value={filterCategoryId}
+            onChange={(e) => { setFilterCategoryId(e.target.value); fetchAll({ categoryId: e.target.value }); }}
+            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 outline-none focus:ring-blue-50 focus:border-blue-500"
+          >
+            <option value="">ทุกประเภท</option>
+            {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+
+        <div className="min-w-[150px]">
+          <label className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-slate-500">สถานะ</label>
+          <select
+            value={filterStatus}
+            onChange={(e) => { setFilterStatus(e.target.value); fetchAll({ status: e.target.value }); }}
+            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 outline-none focus:ring-blue-50 focus:border-blue-500"
+          >
+            <option value="">ทุกสถานะ</option>
+            <option value="ACTIVE">Active</option>
+            <option value="TERMINATED">Terminated</option>
+          </select>
+        </div>
+
+        {(filterCompanyId || filterCategoryId || filterStatus || search) && (
+          <button
+            onClick={() => {
+              setSearch(''); setFilterCompanyId(''); setFilterCategoryId(''); setFilterStatus('');
+              fetchAll({ search: '', companyId: '', categoryId: '', status: '' });
+            }}
+            className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-500 transition hover:bg-slate-50"
+          >
+            ล้างตัวกรอง
+          </button>
+        )}
+      </div>
 
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
         {isLoading ? (
@@ -364,6 +563,7 @@ function AssetRegister() {
                       <div className="flex items-center justify-end gap-2">
                         <button onClick={() => openModal('PREVIEW', a)} className="p-2 text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-600 hover:text-white transition shadow-sm" title="Preview"><BiSearch className="text-lg" /></button>
                         <button onClick={() => openModal('EDIT', a)} className="p-2 text-amber-600 bg-amber-50 rounded-lg hover:bg-amber-500 hover:text-white transition shadow-sm" title="Edit"><BiCog className="text-lg" /></button>
+                        <button onClick={() => openDuplicate(a)} className="p-2 text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-600 hover:text-white transition shadow-sm" title="ทำซ้ำรายการนี้"><BiCopy className="text-lg" /></button>
                         <button
                           onClick={() => handleTerminate(a)}
                           className={`p-2 rounded-lg transition shadow-sm ${a.isActive ? 'text-orange-600 bg-orange-50 hover:bg-orange-500 hover:text-white' : 'text-emerald-600 bg-emerald-50 hover:bg-emerald-500 hover:text-white'}`}
@@ -462,7 +662,7 @@ function AssetRegister() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="mb-1.5 block text-sm font-bold text-slate-700">ราคาทรัพย์สิน <span className="text-red-500">*</span></label>
-                  <input type="number" step="0.01" min="0" required value={formData.cost} onChange={e => setFormData({ ...formData, cost: e.target.value })} disabled={modalMode === 'PREVIEW'} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:ring-blue-50 focus:border-blue-500 disabled:bg-slate-200 disabled:text-slate-500" />
+                  <input type="number" step="0.01" min="0" required value={formData.cost} onChange={e => setFormData({ ...formData, cost: e.target.value })} onBlur={e => setFormData({ ...formData, cost: e.target.value === '' ? '' : round2(e.target.value) })} disabled={modalMode === 'PREVIEW'} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:ring-blue-50 focus:border-blue-500 disabled:bg-slate-200 disabled:text-slate-500" />
                 </div>
                 {/* 🌟 เลือกอายุการใช้งานเป็นปี แล้วระบบแปลงเป็น %/ปี ให้อัตโนมัติ (เก็บลง DB เป็น % เหมือนเดิม)
                     ถ้าไม่มีในตัวเลือก เลือก "กำหนดเอง" แล้วกรอก % ตรงๆ ได้ */}
@@ -481,7 +681,7 @@ function AssetRegister() {
               {rateMode === 'CUSTOM' ? (
                 <div>
                   <label className="mb-1.5 block text-sm font-bold text-slate-700">อัตราค่าเสื่อมราคาต่อปี (%) <span className="text-red-500">*</span></label>
-                  <input type="number" step="0.01" min="0.01" max="100" required placeholder="เช่น 20" value={formData.depreciationRatePercent} onChange={e => setFormData({ ...formData, depreciationRatePercent: e.target.value })} disabled={modalMode === 'PREVIEW'} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:ring-blue-50 focus:border-blue-500 disabled:bg-slate-200 disabled:text-slate-500" />
+                  <input type="number" step="0.01" min="0.01" max="100" required placeholder="เช่น 20" value={formData.depreciationRatePercent} onChange={e => setFormData({ ...formData, depreciationRatePercent: e.target.value })} onBlur={e => setFormData({ ...formData, depreciationRatePercent: e.target.value === '' ? '' : round2(e.target.value) })} disabled={modalMode === 'PREVIEW'} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:ring-blue-50 focus:border-blue-500 disabled:bg-slate-200 disabled:text-slate-500" />
                   {Number(formData.depreciationRatePercent) > 0 && (
                     <p className="mt-1 text-xs text-slate-400">
                       เทียบเท่าอายุการใช้งานประมาณ {(100 / Number(formData.depreciationRatePercent)).toFixed(2)} ปี
@@ -506,7 +706,8 @@ function AssetRegister() {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="mb-1.5 block text-sm font-bold text-slate-700">ค่าเสื่อมสะสมยกมา</label>
-                    <input type="number" step="0.01" min="0" placeholder="0.00" value={formData.openingAccumDepr} onChange={e => setFormData({ ...formData, openingAccumDepr: e.target.value })} disabled={modalMode === 'PREVIEW'} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:ring-blue-50 focus:border-blue-500 disabled:bg-slate-200 disabled:text-slate-500" />
+                    {/* onBlur ปัดทศนิยมให้เหลือ 2 ตำแหน่ง กันค่าที่ paste มายาวเกินจน input ไม่ยอมรับ */}
+                  <input type="number" step="0.01" min="0" placeholder="0.00" value={formData.openingAccumDepr} onChange={e => setFormData({ ...formData, openingAccumDepr: e.target.value })} onBlur={e => setFormData({ ...formData, openingAccumDepr: e.target.value === '' ? '' : round2(e.target.value) })} disabled={modalMode === 'PREVIEW'} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:ring-blue-50 focus:border-blue-500 disabled:bg-slate-200 disabled:text-slate-500" />
                   </div>
                   <div>
                     <label className="mb-1.5 block text-sm font-bold text-slate-700">ณ วันที่</label>
@@ -514,13 +715,60 @@ function AssetRegister() {
                   </div>
                 </div>
                 <p className="mt-2 text-xs text-slate-400">ถ้ากรอกช่องนี้ ระบบจะใช้ยอดนี้เป็นฐานคำนวณแทนวันที่ซื้อ (กรอกทั้งคู่หรือเว้นว่างทั้งคู่)</p>
+
+                {/* 🌟 คำเตือนจริง — สงวนสีส้มไว้ให้เฉพาะกรณีที่ข้อมูลจะทำให้ตัวเลขผิด */}
+                {openingWarning && (
+                  <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-2.5 text-xs font-semibold text-amber-800">
+                    <BiErrorCircle className="mt-0.5 shrink-0 text-sm" />
+                    <span>{openingWarning}</span>
+                  </div>
+                )}
               </div>
+
+              {/* 🌟 [asset_duplicate] สร้างหลายรายการพร้อมกัน — เฉพาะโหมดสร้างใหม่ */}
+              {modalMode === 'CREATE' && (
+                <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <label className="mb-1.5 block text-sm font-bold text-slate-700">
+                    จำนวนที่ต้องการสร้าง
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="50"
+                    value={quantity}
+                    onChange={(e) => setQuantity(e.target.value)}
+                    className="w-32 rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:ring-blue-50 focus:border-blue-500"
+                  />
+                  {codePreview && (
+                    <p className="mt-2 text-xs text-slate-500">
+                      จะสร้างรหัส: <span className="font-mono font-bold text-slate-700">{codePreview}</span>
+                    </p>
+                  )}
+                  <p className="mt-1 text-xs text-slate-400">
+                    ระบบรันเลขท้ายรหัสต่อให้อัตโนมัติ และข้ามรหัสที่มีอยู่แล้วในระบบ (สูงสุด 50 รายการต่อครั้ง)
+                  </p>
+                </div>
+              )}
 
               {computedLife && (
                 <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm">
                   <p className="font-bold text-blue-800 mb-1">คำนวณอัตโนมัติ (Auto display)</p>
                   <p className="text-blue-700">อายุการใช้งานทั้งหมด: <span className="font-bold">{computedLife.totalDays.toLocaleString()} วัน</span></p>
-                  <p className="text-blue-700">วันที่สิ้นสุดอายุ: <span className="font-bold">{computedLife.endDate.toLocaleDateString('th-TH')}</span></p>
+                  <p className="text-blue-700">วันที่สิ้นสุดอายุ: <span className="font-bold">{formatDate(computedLife.endDate)}</span></p>
+                  {calcTypePreview && (
+                    <div className="mt-2 border-t border-blue-200 pt-2">
+                      <p className="text-blue-700">
+                        ประเภทการคำนวณค่าเสื่อมราคา (ปี {calcTypePreview.year}):{' '}
+                        <span className="font-bold">{calcTypePreview.label}</span>
+                      </p>
+                      <p className="mt-0.5 text-xs text-blue-500">{calcTypePreview.condition}</p>
+                      {/* หมายเหตุอธิบาย ไม่ใช่คำเตือน จึงใช้โทนกลาง สงวนสีส้ม/แดงไว้ให้ปัญหาจริงเท่านั้น */}
+                      <p className="mt-1 flex items-start gap-1 text-xs text-slate-500">
+                        <BiInfoCircle className="mt-0.5 shrink-0" />
+                        ระบบเลือกให้อัตโนมัติตามเงื่อนไข และเปลี่ยนเองทุกปีตามอายุทรัพย์สิน จึงไม่ต้องกรอกเอง
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
 

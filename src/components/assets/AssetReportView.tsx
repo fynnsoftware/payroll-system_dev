@@ -5,8 +5,10 @@
 // ⚠️ component กลาง ใช้ร่วมกันทั้งฝั่ง /admin/assets-report (ธีม Admin) และ /asset/report (ธีม Employee)
 // แก้ที่นี่ที่เดียวมีผลทั้งสองฝั่ง — อย่า copy ไปวางซ้ำ
 import React, { useState, useEffect } from 'react';
-import { BiBarChartAlt2, BiRefresh, BiBuilding, BiX, BiListUl, BiTable } from 'react-icons/bi';
+import { BiBarChartAlt2, BiRefresh, BiBuilding, BiX, BiListUl, BiTable, BiSpreadsheet } from 'react-icons/bi';
 import { ToastProvider, useToast } from '@/components/Toast';
+import { formatDate } from '@/lib/formatDate';
+import { exportAssetReport } from '@/lib/assetReportExport';
 
 // 🌟 [asset_hierarchy] ทะเบียนบริษัทฝั่ง asset รองรับโครงสร้างแม่-ลูก 2 ชั้นแล้ว
 interface CompanyOption { id: number; companyName: string; companyCode: string; parentId?: number | null; }
@@ -98,6 +100,26 @@ function AssetReport() {
 
   useEffect(() => { if (companyId) runReport(); /* eslint-disable-next-line */ }, [companyId]);
 
+  // 🌟 [asset_report] ส่งออก Excel — ใช้ข้อมูลชุดเดียวกับที่แสดงบนหน้าจอ ไม่ยิง API ซ้ำ
+  // จึงมั่นใจได้ว่าไฟล์ที่ได้ตรงกับตัวเลขที่เห็นอยู่ตรงหน้าเป๊ะ
+  const handleExport = (target: 'SUMMARY' | 'DETAIL' | 'BOTH') => {
+    if (!report) {
+      showToast('ยังไม่มีข้อมูลรายงานให้ส่งออก', 'error');
+      return;
+    }
+    if (report.detail.length === 0) {
+      showToast('ไม่มีรายการทรัพย์สินในเงื่อนไขที่เลือก', 'error');
+      return;
+    }
+    try {
+      const fileName = exportAssetReport(report, target, year);
+      showToast(`ส่งออกไฟล์ ${fileName} เรียบร้อยแล้ว`, 'success');
+    } catch (error) {
+      console.error('Export Excel Error:', error);
+      showToast('ส่งออกไฟล์ไม่สำเร็จ', 'error');
+    }
+  };
+
   return (
     // ⚠️ padding/พื้นหลัง ปล่อยให้ layout ที่ครอบอยู่จัดการ (ดูหมายเหตุใน AssetRegisterView)
     <div className="mx-auto max-w-7xl animate-in fade-in duration-500">
@@ -158,15 +180,32 @@ function AssetReport() {
           <div className="bg-white rounded-2xl shadow-md border border-slate-200 p-6 mb-4">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-sm">
               <p><span className="font-bold text-slate-500">ชื่อบริษัท:</span> <span className="font-black text-slate-800 flex items-center gap-1"><BiBuilding /> {report.companyName}{includeSub && ' (รวมบริษัทลูก)'}</span></p>
-              <p><span className="font-bold text-slate-500">วันสิ้นงวดบัญชี:</span> <span className="font-black text-slate-800">{new Date(report.periodEndDate).toLocaleDateString('th-TH')}</span></p>
-              <p><span className="font-bold text-slate-500">ช่วงงวด:</span> <span className="font-black text-slate-800">{new Date(report.periodStartDate).toLocaleDateString('th-TH')} - {new Date(report.periodEndDate).toLocaleDateString('th-TH')}</span></p>
+              <p><span className="font-bold text-slate-500">วันสิ้นงวดบัญชี:</span> <span className="font-black text-slate-800">{formatDate(report.periodEndDate)}</span></p>
+              <p><span className="font-bold text-slate-500">ช่วงงวด:</span> <span className="font-black text-slate-800">{formatDate(report.periodStartDate)} - {formatDate(report.periodEndDate)}</span></p>
             </div>
           </div>
 
-          {/* Tabs = 2 sheet */}
-          <div className="flex gap-2 mb-4">
+          {/* Tabs = 2 sheet + ปุ่ม export ตามแท็บที่เปิดอยู่ */}
+          <div className="mb-4 flex flex-wrap items-center gap-2">
             <button onClick={() => setTab('SUMMARY')} className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold transition ${tab === 'SUMMARY' ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-slate-500 border border-slate-200'}`}><BiListUl /> สรุปทะเบียนทรัพย์สิน</button>
             <button onClick={() => setTab('DETAIL')} className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold transition ${tab === 'DETAIL' ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-slate-500 border border-slate-200'}`}><BiTable /> ข้อมูลทะเบียนทรัพย์สิน</button>
+
+            <div className="ml-auto flex gap-2">
+              <button
+                onClick={() => handleExport(tab)}
+                className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-bold text-emerald-700 transition hover:bg-emerald-600 hover:text-white"
+                title="ส่งออกเฉพาะแท็บที่เปิดอยู่"
+              >
+                <BiSpreadsheet className="text-lg" /> Export แท็บนี้
+              </button>
+              <button
+                onClick={() => handleExport('BOTH')}
+                className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-50"
+                title="ส่งออกทั้ง 2 แท็บในไฟล์เดียว"
+              >
+                <BiSpreadsheet className="text-lg" /> Export ทั้งหมด
+              </button>
+            </div>
           </div>
 
           <div className="bg-white rounded-2xl shadow-md border border-slate-200 overflow-hidden">
@@ -180,27 +219,51 @@ function AssetReport() {
   );
 }
 
+// 🌟 [asset_report] ตาราง "สรุปทะเบียนทรัพย์สิน" รูปแบบ pivot ตาม template
+// หัวตาราง 2 ชั้น: แถวบนมีแถบ "Values" คร่อมคอลัมน์ตัวเลขทั้ง 5 (เลียนแบบ pivot table ของ Excel)
+// คอลัมน์แยกเป็น ประเภท / รหัส / รายละเอียด / อัตราค่าเสื่อม แล้วตามด้วยกลุ่ม Sum of ...
 function SummarySheet({ report }: { report: ReportData }) {
+  const thBase = 'px-4 py-3 font-black uppercase tracking-wider text-[11px]';
+  const dimCols = 4; // จำนวนคอลัมน์ที่ไม่ใช่ตัวเลข (ประเภท/รหัส/รายละเอียด/อัตรา)
+
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-left text-sm whitespace-nowrap">
         <thead className="bg-slate-100 border-b border-slate-200 text-slate-600">
           <tr>
-            <th className="px-4 py-3 font-black uppercase tracking-wider text-xs">ประเภททรัพย์สิน</th>
-            <th className="px-4 py-3 font-black uppercase tracking-wider text-xs text-right">ราคาทุน</th>
-            <th className="px-4 py-3 font-black uppercase tracking-wider text-xs text-right">ค่าเสื่อมสะสมยกมา</th>
-            <th className="px-4 py-3 font-black uppercase tracking-wider text-xs text-right">ค่าเสื่อมราคา</th>
-            <th className="px-4 py-3 font-black uppercase tracking-wider text-xs text-right">ค่าเสื่อมสะสมยกไป</th>
-            <th className="px-4 py-3 font-black uppercase tracking-wider text-xs text-right">มูลค่าตามบัญชียกไป</th>
+            <th className="border-b border-slate-200" colSpan={dimCols} />
+            <th
+              className="border-b border-l border-slate-300 bg-slate-200/70 px-4 py-2 text-center text-[11px] font-black uppercase tracking-widest text-slate-600"
+              colSpan={5}
+            >
+              Values
+            </th>
+          </tr>
+          <tr>
+            <th className={thBase}>ประเภททรัพย์สิน</th>
+            <th className={thBase}>รหัสทรัพย์สิน</th>
+            <th className={thBase}>รายละเอียดทรัพย์สิน</th>
+            <th className={`${thBase} text-right`}>อัตราค่าเสื่อมราคาต่อปี</th>
+            <th className={`${thBase} border-l border-slate-300 text-right`}>Sum of ราคาทุน</th>
+            <th className={`${thBase} text-right`}>Sum of ค่าเสื่อมสะสมยกมา</th>
+            <th className={`${thBase} text-right`}>Sum of ค่าเสื่อมราคา</th>
+            <th className={`${thBase} text-right`}>Sum of ค่าเสื่อมสะสมยกไป</th>
+            <th className={`${thBase} text-right`}>Sum of มูลค่าตามบัญชียกไป</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
           {report.summary.map((g) => (
             <React.Fragment key={g.category}>
-              {g.items.map((row) => (
+              {g.items.map((row, i) => (
                 <tr key={row.assetCode} className="hover:bg-blue-50/50 transition text-slate-600">
-                  <td className="px-4 py-2 pl-8">{g.category} <span className="text-slate-400 font-mono">— {row.assetCode}</span></td>
-                  <td className="px-4 py-2 text-right font-mono">{fmt(row.cost)}</td>
+                  {/* แสดงชื่อประเภทเฉพาะแถวแรกของกลุ่ม เหมือน pivot ที่ไม่พิมพ์ค่าซ้ำ */}
+                  <td className="px-4 py-2 font-semibold text-slate-700">
+                    {i === 0 ? g.category : ''}
+                  </td>
+                  <td className="px-4 py-2 font-mono">{row.assetCode}</td>
+                  <td className="px-4 py-2">{row.description}</td>
+                  <td className="px-4 py-2 text-right font-mono">{(row.depreciationRate * 100).toFixed(2)}%</td>
+                  <td className="px-4 py-2 border-l border-slate-200 text-right font-mono">{fmt(row.cost)}</td>
                   <td className="px-4 py-2 text-right font-mono">{fmt(row.accumDeprBF)}</td>
                   <td className="px-4 py-2 text-right font-mono">{fmt(row.depreciationCurrentPeriod)}</td>
                   <td className="px-4 py-2 text-right font-mono">{fmt(row.accumDeprCF)}</td>
@@ -208,8 +271,8 @@ function SummarySheet({ report }: { report: ReportData }) {
                 </tr>
               ))}
               <tr className="bg-amber-50 font-black text-slate-800">
-                <td className="px-4 py-2.5">{g.category} Total</td>
-                <td className="px-4 py-2.5 text-right font-mono">{fmt(g.subtotal.cost)}</td>
+                <td className="px-4 py-2.5" colSpan={dimCols}>{g.category} Total</td>
+                <td className="px-4 py-2.5 border-l border-amber-200 text-right font-mono">{fmt(g.subtotal.cost)}</td>
                 <td className="px-4 py-2.5 text-right font-mono">{fmt(g.subtotal.accumDeprBF)}</td>
                 <td className="px-4 py-2.5 text-right font-mono">{fmt(g.subtotal.depreciationCurrentPeriod)}</td>
                 <td className="px-4 py-2.5 text-right font-mono">{fmt(g.subtotal.accumDeprCF)}</td>
@@ -218,8 +281,8 @@ function SummarySheet({ report }: { report: ReportData }) {
             </React.Fragment>
           ))}
           <tr className="bg-slate-800 text-white font-black">
-            <td className="px-4 py-3">Grand Total</td>
-            <td className="px-4 py-3 text-right font-mono">{fmt(report.grandTotal.cost)}</td>
+            <td className="px-4 py-3" colSpan={dimCols}>Grand Total</td>
+            <td className="px-4 py-3 border-l border-slate-600 text-right font-mono">{fmt(report.grandTotal.cost)}</td>
             <td className="px-4 py-3 text-right font-mono">{fmt(report.grandTotal.accumDeprBF)}</td>
             <td className="px-4 py-3 text-right font-mono">{fmt(report.grandTotal.depreciationCurrentPeriod)}</td>
             <td className="px-4 py-3 text-right font-mono">{fmt(report.grandTotal.accumDeprCF)}</td>
@@ -231,41 +294,83 @@ function SummarySheet({ report }: { report: ReportData }) {
   );
 }
 
+// 🌟 [asset_report] ตาราง "ข้อมูลทะเบียนทรัพย์สิน" แบบเต็มตาม template ต้นฉบับ 14 คอลัมน์
+// คอลัมน์รหัสทรัพย์สินถูกตรึงไว้ด้านซ้าย (sticky) เพราะตารางกว้างเกินจอ ต้องเลื่อนแนวนอน
+// ถ้าไม่ตรึงไว้จะไล่ดูตัวเลขแล้วไม่รู้ว่าเป็นของทรัพย์สินชิ้นไหน
 function DetailSheet({ report, onSelectRow }: { report: ReportData; onSelectRow: (row: DetailRow) => void }) {
   if (report.detail.length === 0) {
     return <div className="p-10 text-center text-slate-400 font-semibold">ไม่พบทรัพย์สินในเงื่อนไขที่เลือก</div>;
   }
+
+  const thBase = 'px-3 py-3 font-black uppercase tracking-wider text-[11px] align-bottom';
+  const tdBase = 'px-3 py-3';
+
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-left text-sm whitespace-nowrap">
         <thead className="bg-slate-100 border-b border-slate-200 text-slate-600">
           <tr>
-            <th className="px-4 py-3 font-black uppercase tracking-wider text-xs">รหัสทรัพย์สิน</th>
-            <th className="px-4 py-3 font-black uppercase tracking-wider text-xs">รายละเอียด</th>
-            <th className="px-4 py-3 font-black uppercase tracking-wider text-xs">ประเภทการคำนวณ</th>
-            <th className="px-4 py-3 font-black uppercase tracking-wider text-xs text-center">สถานะ</th>
-            <th className="px-4 py-3 font-black uppercase tracking-wider text-xs text-right">มูลค่าตามบัญชียกไป</th>
+            <th className={`${thBase} sticky left-0 z-10 bg-slate-100`}>รหัสทรัพย์สิน</th>
+            <th className={thBase}>ประเภททรัพย์สิน</th>
+            <th className={thBase}>รายละเอียดทรัพย์สิน</th>
+            <th className={`${thBase} text-right`}>อัตราค่าเสื่อม<br />ราคาต่อปี</th>
+            <th className={`${thBase} text-center`}>วันที่ซื้อ</th>
+            <th className={`${thBase} text-center`}>วันที่สิ้นสุดอายุ</th>
+            <th className={`${thBase} text-right`}>อายุการใช้งาน<br />ทั้งหมด (วัน)</th>
+            <th className={`${thBase} text-right`}>อายุการใช้งาน<br />ที่ผ่านมา (วัน)</th>
+            <th className={thBase}>ประเภทการคำนวณ<br />ค่าเสื่อมราคา</th>
+            <th className={`${thBase} text-right`}>ราคาทุน</th>
+            <th className={`${thBase} text-right`}>ค่าเสื่อม<br />สะสมยกมา</th>
+            <th className={`${thBase} text-right`}>ค่าเสื่อมราคา</th>
+            <th className={`${thBase} text-right`}>ค่าเสื่อม<br />สะสมยกไป</th>
+            <th className={`${thBase} text-right`}>มูลค่าตาม<br />บัญชียกไป</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
           {report.detail.map((row) => (
-            <tr key={row.assetCode} onClick={() => onSelectRow(row)} className="hover:bg-blue-50/50 transition cursor-pointer text-slate-700">
-              <td className="px-4 py-3 font-mono font-bold">{row.assetCode}</td>
-              <td className="px-4 py-3 font-semibold">{row.description}</td>
-              <td className="px-4 py-3 text-slate-500">
+            <tr key={row.assetCode} onClick={() => onSelectRow(row)} className="group hover:bg-blue-50/50 transition cursor-pointer text-slate-700">
+              <td className={`${tdBase} sticky left-0 z-10 bg-white font-mono font-bold group-hover:bg-blue-50/50`}>
+                <div className="flex items-center gap-2">
+                  {row.assetCode}
+                  {row.isExpired && (
+                    <span className="rounded-full border border-red-200 bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700">
+                      หมดอายุ
+                    </span>
+                  )}
+                </div>
+              </td>
+              <td className={`${tdBase} text-slate-600`}>{row.category}</td>
+              <td className={`${tdBase} font-semibold`}>
+                {row.description}
+                {row.location && <span className="ml-1 text-xs font-normal text-slate-400">({row.location})</span>}
+              </td>
+              <td className={`${tdBase} text-right font-mono`}>{(row.depreciationRate * 100).toFixed(2)}%</td>
+              <td className={`${tdBase} text-center font-mono text-slate-600`}>{formatDate(row.purchaseDate)}</td>
+              <td className={`${tdBase} text-center font-mono text-slate-600`}>{formatDate(row.endOfLifeDate)}</td>
+              <td className={`${tdBase} text-right font-mono`}>{row.totalUsefulLifeDays.toLocaleString()}</td>
+              <td className={`${tdBase} text-right font-mono`}>{row.daysUsedTotal.toLocaleString()}</td>
+              <td className={`${tdBase} text-slate-500`}>
                 <span className="font-semibold text-slate-600">{row.calcType}</span>
-                <span className="block text-xs text-slate-400">{row.calcCondition}</span>
+                <span className="block text-[11px] text-slate-400">{row.calcCondition}</span>
               </td>
-              <td className="px-4 py-3 text-center">
-                {row.isExpired && (
-                  <span className="px-3 py-1 rounded-full text-[11px] font-bold uppercase border bg-red-100 text-red-700 border-red-200">
-                    หมดอายุ
-                  </span>
-                )}
-              </td>
-              <td className="px-4 py-3 text-right font-mono font-bold">{fmt(row.nbv)}</td>
+              <td className={`${tdBase} text-right font-mono`}>{fmt(row.cost)}</td>
+              <td className={`${tdBase} text-right font-mono`}>{fmt(row.accumDeprBF)}</td>
+              <td className={`${tdBase} text-right font-mono`}>{fmt(row.depreciationCurrentPeriod)}</td>
+              <td className={`${tdBase} text-right font-mono`}>{fmt(row.accumDeprCF)}</td>
+              <td className={`${tdBase} text-right font-mono font-bold`}>{fmt(row.nbv)}</td>
             </tr>
           ))}
+
+          {/* แถวรวมทั้งหมด — ใช้ยอดเดียวกับ Grand Total ของ sheet สรุป จะได้ตรวจทานข้ามกันได้ */}
+          <tr className="bg-slate-800 font-black text-white">
+            <td className={`${tdBase} sticky left-0 z-10 bg-slate-800`}>รวมทั้งหมด</td>
+            <td className={tdBase} colSpan={8}>{report.detail.length.toLocaleString()} รายการ</td>
+            <td className={`${tdBase} text-right font-mono`}>{fmt(report.grandTotal.cost)}</td>
+            <td className={`${tdBase} text-right font-mono`}>{fmt(report.grandTotal.accumDeprBF)}</td>
+            <td className={`${tdBase} text-right font-mono`}>{fmt(report.grandTotal.depreciationCurrentPeriod)}</td>
+            <td className={`${tdBase} text-right font-mono`}>{fmt(report.grandTotal.accumDeprCF)}</td>
+            <td className={`${tdBase} text-right font-mono`}>{fmt(report.grandTotal.nbv)}</td>
+          </tr>
         </tbody>
       </table>
     </div>
@@ -280,8 +385,8 @@ function RowDetailModal({ row, onClose }: { row: DetailRow; onClose: () => void 
     ['ที่ตั้งทรัพย์สิน', row.location || '-'],
     ['บริษัท', row.companyName],
     ['อัตราค่าเสื่อมราคาต่อปี', `${(row.depreciationRate * 100).toFixed(2)}%`],
-    ['วันที่ซื้อ', new Date(row.purchaseDate).toLocaleDateString('th-TH')],
-    ['วันที่สิ้นสุดอายุ', new Date(row.endOfLifeDate).toLocaleDateString('th-TH')],
+    ['วันที่ซื้อ', formatDate(row.purchaseDate)],
+    ['วันที่สิ้นสุดอายุ', formatDate(row.endOfLifeDate)],
     ['อายุการใช้งานทั้งหมด (วัน)', row.totalUsefulLifeDays.toLocaleString()],
     ['อายุการใช้งานที่ผ่านมา (วัน)', row.daysUsedTotal.toLocaleString()],
     ['ประเภทการคำนวณค่าเสื่อมราคา', row.calcType],

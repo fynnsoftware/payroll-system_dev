@@ -8,6 +8,7 @@ import { getToken } from "next-auth/jwt";
 import { calcAssetDepreciation, getFiscalPeriod, DEFAULT_CALC_RULES, CalcRule } from "@/lib/depreciation";
 import { ensureAssetYearsClosed, getFrozenBFForYear } from "@/lib/assetYearClose";
 import { getAssetCompanyIds, isAssetCompanyAllowed, explainAssetAccessDenied } from "@/lib/assetScope";
+import { parseAssetCode, generateAssetCodes } from "@/lib/assetCode";
 
 // ==========================================
 // 🟢 GET: ดึงรายการทรัพย์สิน (รองรับ filter บริษัท + group company)
@@ -129,11 +130,15 @@ export async function POST(request: NextRequest) {
       purchaseDate,
       openingAccumDepr, // 🌟 [phase2asset_#15] ยอดยกมา manual สำหรับทรัพย์สินเก่า (optional)
       openingAsOfDate,
+      quantity, // 🌟 [asset_duplicate] จำนวนรายการที่ต้องการสร้าง (ไม่ส่งมา = 1)
     } = body;
 
     if (!assetCode || !companyId || !categoryId || !description || cost === undefined || !depreciationRate || !purchaseDate) {
       return NextResponse.json({ error: "กรุณากรอกข้อมูลให้ครบถ้วน" }, { status: 400 });
     }
+
+    // จำกัดไว้ที่ 50 รายการต่อครั้ง กัน request ใหญ่เกินจน timeout บน serverless
+    const qty = Math.max(1, Math.min(50, Number(quantity) || 1));
 
     const allowedCompanyIds = await getAssetCompanyIds(token);
     if (!isAssetCompanyAllowed(allowedCompanyIds, Number(companyId))) {
@@ -146,22 +151,53 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "ถ้ากรอกยอดยกมา ต้องระบุวันที่ของยอดยกมาด้วย (และในทางกลับกัน)" }, { status: 400 });
     }
 
-    const asset = await prisma.asset.create({
-      data: {
-        assetCode: String(assetCode).trim(),
-        companyId: Number(companyId),
-        categoryId: Number(categoryId),
-        description,
-        location: location || null,
-        cost: Number(cost),
-        depreciationRate: Number(depreciationRate),
-        purchaseDate: new Date(purchaseDate),
-        openingAccumDepr: openingAccumDepr !== undefined && openingAccumDepr !== "" ? Number(openingAccumDepr) : null,
-        openingAsOfDate: openingAsOfDate ? new Date(openingAsOfDate) : null,
-      },
+    // 🌟 [asset_duplicate] สร้างรหัสรันต่อเนื่อง โดยข้ามรหัสที่ถูกใช้ไปแล้ว
+    // ดึงรหัสเดิมที่ขึ้นต้นด้วย prefix เดียวกันมาก่อน (query แคบ ไม่ใช่ทั้งตาราง)
+    const parsed = parseAssetCode(String(assetCode));
+    const existing = await prisma.asset.findMany({
+      where: { assetCode: { startsWith: parsed.prefix } },
+      select: { assetCode: true },
     });
+    const takenCodes = new Set(existing.map((a) => a.assetCode));
 
-    return NextResponse.json({ message: "บันทึกทรัพย์สินสำเร็จ", data: asset }, { status: 201 });
+    const codes = generateAssetCodes(String(assetCode), qty, takenCodes);
+    if (codes.length < qty) {
+      return NextResponse.json(
+        { error: "ไม่สามารถสร้างรหัสทรัพย์สินได้ครบตามจำนวน กรุณาเปลี่ยนรหัสตั้งต้น" },
+        { status: 400 },
+      );
+    }
+
+    const sharedData = {
+      companyId: Number(companyId),
+      categoryId: Number(categoryId),
+      description,
+      location: location || null,
+      cost: Number(cost),
+      depreciationRate: Number(depreciationRate),
+      purchaseDate: new Date(purchaseDate),
+      openingAccumDepr:
+        openingAccumDepr !== undefined && openingAccumDepr !== "" ? Number(openingAccumDepr) : null,
+      openingAsOfDate: openingAsOfDate ? new Date(openingAsOfDate) : null,
+    };
+
+    // สร้างทั้งชุดใน transaction เดียว — ถ้าชิ้นไหนชน unique จะ rollback ทั้งหมด
+    // ไม่ปล่อยให้สร้างได้ครึ่งๆ กลางๆ แล้วผู้ใช้ต้องมานั่งไล่ลบเอง
+    await prisma.$transaction(
+      codes.map((code) => prisma.asset.create({ data: { ...sharedData, assetCode: code } })),
+    );
+
+    return NextResponse.json(
+      {
+        message:
+          qty === 1
+            ? "บันทึกทรัพย์สินสำเร็จ"
+            : `สร้างทรัพย์สิน ${qty} รายการสำเร็จ (${codes[0]} - ${codes[codes.length - 1]})`,
+        codes,
+        count: codes.length,
+      },
+      { status: 201 },
+    );
   } catch (error: any) {
     if (error.code === "P2002") {
       return NextResponse.json({ error: "รหัสทรัพย์สินนี้มีอยู่ในระบบแล้ว" }, { status: 400 });
