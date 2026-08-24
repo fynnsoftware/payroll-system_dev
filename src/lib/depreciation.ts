@@ -109,24 +109,52 @@ function evaluateCondition(
 // ==========================================
 // FORMULA_TYPES — vocab คงที่ของ "สูตรคำนวณ" ที่ engine รองรับ (ทดสอบแล้วว่าถูกต้อง)
 // ==========================================
-export type FormulaTypeKey = "STRAIGHT_LINE_PRORATE" | "FULL_ANNUAL_FIXED" | "ZERO";
+export type FormulaTypeKey =
+  | "STRAIGHT_LINE_PRORATE"
+  | "PRORATE_FROM_PURCHASE"
+  | "FULL_ANNUAL_FIXED"
+  | "ZERO";
 
 export const FORMULA_TYPE_OPTIONS: { key: FormulaTypeKey; hint: string }[] = [
-  { key: "STRAIGHT_LINE_PRORATE", hint: "คิดตามสัดส่วนวันจริงจากวันซื้อ (รองรับทั้งซื้อ/หมดอายุระหว่างงวด)" },
+  { key: "STRAIGHT_LINE_PRORATE", hint: "คิดตามสัดส่วนวันจริง ต่อยอดจากยอดยกมา (ถ้ามี) — สูตรมาตรฐานของระบบ" },
+  { key: "PRORATE_FROM_PURCHASE", hint: "ราคาทุน x วันที่ผ่านมา / อายุทั้งหมด นับจากวันซื้อเสมอ ไม่สนใจยอดยกมา (สูตรเดียวกับ Excel ต้นฉบับ)" },
   { key: "FULL_ANNUAL_FIXED", hint: "คิดเต็มจำนวนคงที่ต่อปี = ราคาทุน x อัตรา (ไม่ prorate)" },
   { key: "ZERO", hint: "ไม่มีค่าเสื่อมเพิ่มในงวดนี้ (ยกมา = ยกไป)" },
 ];
 
 function applyFormula(
   key: string,
-  ctx: { period: FiscalPeriod; acc: ReturnType<typeof buildAccumulator>; accumDeprBF: number },
+  ctx: {
+    asset: AssetForCalc;
+    period: FiscalPeriod;
+    acc: ReturnType<typeof buildAccumulator>;
+    accumDeprBF: number;
+  },
 ): number {
-  const { period, acc, accumDeprBF } = ctx;
+  const { asset, period, acc, accumDeprBF } = ctx;
   switch (key as FormulaTypeKey) {
     case "STRAIGHT_LINE_PRORATE": {
       const accumAtEnd = acc.accumulatedAt(period.end);
       return Math.max(0, accumAtEnd - accumDeprBF);
     }
+
+    // 🌟 สูตรเดียวกับไฟล์ Excel ต้นฉบับ: ราคาทุน x อายุที่ผ่านมา / อายุทั้งหมด
+    // นับจาก "วันที่ซื้อ" เสมอ ไม่สนใจยอดยกมา
+    //
+    // ⚠️ ต่างจาก STRAIGHT_LINE_PRORATE ตรงที่ค่าที่ได้เป็นยอดสะสมนับจากวันซื้อ ไม่ใช่ส่วนเพิ่มของงวด
+    // จึงเหมาะกับกรณีที่ยังไม่เคยเสื่อมราคามาก่อน (ยอดยกมา = 0) ซึ่งตรงกับเงื่อนไข "ซื้อระหว่างปี" พอดี
+    // ถ้าเอาไปใช้กับทรัพย์สินที่มียอดยกมา จะกลายเป็นนับซ้ำ — Excel ต้นฉบับมีปัญหานี้จนได้มูลค่าคงเหลือติดลบ
+    // ที่นี่จึงใส่เพดานไม่ให้เกินมูลค่าที่เหลือจะเสื่อมได้ กันไม่ให้ตัวเลขติดลบ
+    case "PRORATE_FROM_PURCHASE": {
+      if (acc.totalUsefulLifeDays <= 0) return 0;
+      const daysUsed = Math.max(
+        0,
+        Math.min(acc.totalUsefulLifeDays, diffDays(period.end, asset.purchaseDate) + 1),
+      );
+      const raw = (acc.cost * daysUsed) / acc.totalUsefulLifeDays;
+      return Math.max(0, Math.min(raw, acc.depreciableBase - accumDeprBF));
+    }
+
     case "FULL_ANNUAL_FIXED":
       return Math.max(0, Math.min(acc.depreciableBase - accumDeprBF, acc.cost * acc.rate));
     case "ZERO":
@@ -228,7 +256,7 @@ export function calcAssetDepreciation(
     }
   }
 
-  const depreciationCurrentPeriod = applyFormula(matched.formulaType, { period, acc, accumDeprBF });
+  const depreciationCurrentPeriod = applyFormula(matched.formulaType, { asset, period, acc, accumDeprBF });
   const accumDeprCF = Math.min(acc.depreciableBase, accumDeprBF + depreciationCurrentPeriod);
   const nbv = Math.max(acc.residual, acc.cost - accumDeprCF);
   const daysUsedTotal = Math.max(0, Math.min(acc.totalUsefulLifeDays, diffDays(period.end, asset.purchaseDate) + 1));
