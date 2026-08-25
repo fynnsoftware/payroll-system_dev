@@ -110,6 +110,19 @@ export default function AssetWarningSettings() {
                 <p className="mt-1 text-xs font-semibold text-amber-700">
                   ให้ผลตรงกับไฟล์ Excel ต้นฉบับทุกกรณี รวมถึงกรณีที่มูลค่าออกมาติดลบ
                 </p>
+                {!enforceResidual && (
+                  <div className="mt-2 rounded-lg border border-amber-300 bg-white p-2.5 text-xs text-amber-800">
+                    <p className="font-bold">ต้องตั้งค่าอีกจุดด้วยถึงจะได้ผลเหมือน Excel</p>
+                    <p className="mt-1">
+                      ไปที่ <span className="font-bold">ประเภทการคำนวณค่าเสื่อมราคา</span> แล้วเปลี่ยนสูตรของกฎ
+                      <span className="font-bold"> "ซื้อระหว่างปี"</span> เป็น
+                      <span className="font-mono font-bold"> PRORATE_FROM_PURCHASE</span>
+                    </p>
+                    <p className="mt-1 text-slate-500">
+                      ถ้าไม่เปลี่ยน สูตรเดิมจะคิดแบบต่อยอดจากยอดยกมา ซึ่งไม่มีทางเกินราคาทุน มูลค่าจึงหยุดที่ 0 ไม่ติดลบ
+                    </p>
+                  </div>
+                )}
               </div>
             </label>
           </div>
