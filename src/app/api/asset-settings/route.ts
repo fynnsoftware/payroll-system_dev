@@ -5,7 +5,8 @@ import { NextResponse, NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { guard } from "@/lib/apiGuard";
 
-// 🔒 [security] เดิมไม่มีการเช็คสิทธิ์เลย — อ่านได้ทุก role ที่ล็อกอิน แก้ได้เฉพาะ ADMIN
+// 🔒 [security] อ่านได้ทุก role ที่ล็อกอิน · แก้ได้เฉพาะ ADMIN และ ASSET
+// ⚠️ เป็นการตั้งค่าระดับระบบ (singleton) ไม่ได้แยกตามบริษัท การแก้จึงมีผลกับทุกบริษัท
 export async function GET(request: NextRequest) {
   try {
     const { denied } = await guard(request);
@@ -26,7 +27,7 @@ export async function GET(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
-    const { denied } = await guard(request, ["ADMIN"]);
+    const { denied } = await guard(request, ["ADMIN", "ASSET"]);
     if (denied) return denied;
 
     const body = await request.json();

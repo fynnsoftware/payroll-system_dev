@@ -9,13 +9,14 @@ import UserProfileHeader from '@/components/UserProfileHeader';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { BiPackage, BiBarChartAlt2, BiBuilding } from 'react-icons/bi';
+import { BiPackage, BiBarChartAlt2, BiBuilding, BiCog } from 'react-icons/bi';
 import { ReactNode } from 'react';
 
 const MENU_ITEMS = [
   { name: 'Company Management', path: '/asset/company', icon: BiBuilding },
   { name: 'Asset Register', path: '/asset/register', icon: BiPackage },
   { name: 'Asset Report', path: '/asset/report', icon: BiBarChartAlt2 },
+  { name: 'Settings', path: '/asset/settings', icon: BiCog },
 ];
 
 export default function AssetPortalLayout({ children }: { children: ReactNode }) {

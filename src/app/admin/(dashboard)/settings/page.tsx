@@ -6,10 +6,11 @@ import React, { useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { BiCog, BiPackage, BiCalculator, BiLockAlt, BiBell } from 'react-icons/bi';
 import { ToastProvider } from '@/components/Toast';
-import AssetCategorySettings from './AssetCategorySettings';
 import CalcTypeSettings from './CalcTypeSettings';
 import RoleModuleAccessSettings from './RoleModuleAccessSettings';
-import AssetWarningSettings from './AssetWarningSettings';
+// 🌟 component กลาง ใช้ร่วมกับหน้า Settings ในโซน /asset
+import AssetCategorySettings from '@/components/assets/AssetCategorySettings';
+import AssetWarningSettings from '@/components/assets/AssetWarningSettings';
 
 export default function SettingsPage() {
   const { data: session } = useSession();

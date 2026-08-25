@@ -1,6 +1,7 @@
 'use client';
 
-// src/app/admin/(dashboard)/settings/AssetWarningSettings.tsx
+// src/components/assets/AssetWarningSettings.tsx
+// ⚠️ component กลาง ใช้ทั้ง /admin/settings และ /asset/settings
 // 🌟 [phase2asset_#16] ตั้งค่าจำนวนวันล่วงหน้าสำหรับ "ใกล้หมดอายุ" (ยังไม่ใช้เตือนจริง ค่าเริ่มต้น 0 = ปิด)
 import React, { useState, useEffect } from 'react';
 import { BiSave, BiInfoCircle } from 'react-icons/bi';
@@ -55,7 +56,11 @@ export default function AssetWarningSettings() {
     <div className="bg-white rounded-2xl shadow-md border border-slate-200 p-6">
       <div className="mb-6 rounded-xl border border-blue-200 bg-blue-50 p-4 flex gap-3 text-sm text-blue-800">
         <BiInfoCircle className="text-xl shrink-0 mt-0.5" />
-        <p>ตอนนี้ระบบยังไม่มีการแจ้งเตือน "ใกล้หมดอายุ" — ค่าเริ่มต้นคือ 0 วัน (ปิดการแจ้งเตือน) ช่องนี้เตรียมไว้สำหรับใช้งานในอนาคต ทรัพย์สินจะขึ้นสถานะ "หมดอายุ" อัตโนมัติเมื่อมูลค่าตามบัญชีเหลือ 1 บาท โดยไม่ต้องตั้งค่าใดๆ เพิ่ม</p>
+        <p>
+          ตอนนี้ระบบยังไม่มีการแจ้งเตือน "ใกล้หมดอายุ" — ค่าเริ่มต้นคือ 0 วัน (ปิดการแจ้งเตือน) ช่องนี้เตรียมไว้สำหรับใช้งานในอนาคต ทรัพย์สินจะขึ้นสถานะ "หมดอายุ" อัตโนมัติเมื่อมูลค่าตามบัญชีเหลือ 1 บาท โดยไม่ต้องตั้งค่าใดๆ เพิ่ม
+          <br />
+          <span className="font-bold">หมายเหตุ:</span> ค่านี้เป็นการตั้งค่าระดับระบบ มีผลกับทุกบริษัท
+        </p>
       </div>
 
       {isLoading ? (

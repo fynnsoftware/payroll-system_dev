@@ -3,9 +3,14 @@ import { NextResponse, NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { guard } from "@/lib/apiGuard";
 
-// 🔒 [security] เดิมไม่มีการเช็คสิทธิ์เลย ใครก็เพิ่ม/แก้ master data ได้
-// อ่าน: ทุก role ที่ล็อกอินแล้ว (ฟอร์มทรัพย์สินต้องใช้ทำ dropdown)
-// เขียน: ADMIN เท่านั้น (หน้า Settings ที่จัดการ master data อยู่ในโซน /admin)
+// 🔒 [security] อ่าน: ทุก role ที่ล็อกอินแล้ว (ฟอร์มทรัพย์สินต้องใช้ทำ dropdown)
+//
+// เพิ่มใหม่: ADMIN และ ASSET (ผู้ใช้ระบบทรัพย์สินต้องเพิ่มประเภทเองได้จาก /asset/settings)
+// แก้ไข/ลบ: ADMIN เท่านั้น (ดู [id]/route.ts)
+//
+// ⚠️ เหตุผลที่ ASSET เพิ่มได้แต่แก้/ลบไม่ได้: ประเภททรัพย์สินเป็นข้อมูลกลางของทั้งระบบ
+// ไม่ได้แยกตามบริษัท การเพิ่มรายการใหม่ไม่กระทบใคร แต่การแก้ชื่อหรือลบ
+// จะกระทบทุกบริษัทที่ใช้ประเภทนั้นอยู่ รวมถึงลูกค้ารายอื่นด้วย
 
 // 🌟 [Phase 2 - Asset] ประเภททรัพย์สิน — seed 4 กลุ่มตาม template เดิมแบบ lazy (ครั้งแรกที่เรียก GET ถ้าตารางว่าง)
 // รอ user confirm (phase2asset_#27) ว่าจะให้ตายตัวหรือแก้ไขเองได้ — ตอนนี้เปิด POST ไว้ให้เพิ่มได้
@@ -41,7 +46,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { denied } = await guard(request, ["ADMIN"]);
+    const { denied } = await guard(request, ["ADMIN", "ASSET"]);
     if (denied) return denied;
 
     const body = await request.json();

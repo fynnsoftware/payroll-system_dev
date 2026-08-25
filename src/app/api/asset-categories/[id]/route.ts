@@ -3,13 +3,15 @@ import { NextResponse, NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { guard } from "@/lib/apiGuard";
 
-// 🔒 [security] แก้/ลบ master data ได้เฉพาะ ADMIN (เดิมไม่มีการเช็คสิทธิ์เลย)
+// 🔒 [security] แก้/ลบ master data ได้เฉพาะ ADMIN และ ASSET
+// ⚠️ เป็นข้อมูลกลางของทั้งระบบ การแก้ชื่อมีผลกับทุกบริษัทที่ใช้ประเภทนั้นอยู่
+// ส่วนการลบมี FK กันไว้อีกชั้น ลบได้เฉพาะประเภทที่ยังไม่มีทรัพย์สินผูกอยู่ (ดักเป็น P2003)
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const { denied } = await guard(request, ["ADMIN"]);
+    const { denied } = await guard(request, ["ADMIN", "ASSET"]);
     if (denied) return denied;
 
     const { id } = await params;
@@ -31,7 +33,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const { denied } = await guard(request, ["ADMIN"]);
+    const { denied } = await guard(request, ["ADMIN", "ASSET"]);
     if (denied) return denied;
 
     const { id } = await params;
