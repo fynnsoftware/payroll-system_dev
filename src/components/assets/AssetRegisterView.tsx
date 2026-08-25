@@ -97,6 +97,11 @@ function AssetRegister() {
   const [filterCategoryId, setFilterCategoryId] = useState('');
   const [filterStatus, setFilterStatus] = useState(''); // '' = ทั้งหมด | ACTIVE | TERMINATED
 
+  // 🌟 [paging] แบ่งหน้าฝั่ง client — API คืนรายการที่กรองแล้วมาทั้งชุด
+  // (ถ้าอนาคตข้อมูลเยอะจนช้า ค่อยย้ายไปทำ pagination ที่ฝั่ง server)
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<'CREATE' | 'EDIT' | 'PREVIEW'>('CREATE');
   const [isSaving, setIsSaving] = useState(false);
@@ -143,7 +148,10 @@ function AssetRegister() {
         fetch('/api/asset-categories'),
         fetch('/api/depreciation-calc-types'),
       ]);
-      if (assetsRes.ok) setAssets(await assetsRes.json());
+      if (assetsRes.ok) {
+        setAssets(await assetsRes.json());
+        setCurrentPage(1); // โหลดชุดใหม่แล้วต้องกลับหน้าแรก ไม่งั้นค้างอยู่หน้าที่ไม่มีข้อมูล
+      }
       if (companiesRes.ok) setCompanies(await companiesRes.json());
       if (categoriesRes.ok) setCategories(await categoriesRes.json());
       if (calcTypesRes.ok) {
@@ -296,6 +304,14 @@ function AssetRegister() {
       ? codes.join(', ')
       : `${codes[0]}, ${codes[1]} ... ${codes[codes.length - 1]}`;
   }, [formData.assetCode, quantity]);
+
+  // 🌟 [paging] คำนวณช่วงข้อมูลของหน้าปัจจุบัน
+  const totalItems = assets.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  // กันหน้าค้างเกินช่วง เช่น อยู่หน้า 5 แล้วกรองจนเหลือข้อมูลแค่ 2 หน้า
+  const safePage = Math.min(currentPage, totalPages);
+  const startIndex = (safePage - 1) * pageSize;
+  const pagedAssets = assets.slice(startIndex, startIndex + pageSize);
 
   // 🌟 [asset_hierarchy] แสดงบริษัทเป็นลำดับชั้น บริษัทแม่ตามด้วยบริษัทลูกที่เยื้องเข้า
   const renderCompanyOptions = () => {
@@ -523,9 +539,11 @@ function AssetRegister() {
         ) : assets.length === 0 ? (
           <div className="p-10 text-center text-slate-400 font-semibold">ไม่พบทรัพย์สิน คลิก "New Asset" เพื่อเริ่มบันทึก</div>
         ) : (
-          <div className="overflow-x-auto">
+          // 🌟 [paging] จำกัดความสูงแล้วให้เลื่อนในตาราง + ตรึงหัวตารางไว้ด้านบน
+          // ต้องกำหนดความสูงตายตัว sticky ถึงจะทำงาน (ถ้าปล่อยสูงตามเนื้อหาจะไม่มีอะไรให้ยึด)
+          <div className="max-h-[60vh] overflow-auto">
             <table className="w-full text-left text-sm whitespace-nowrap">
-              <thead className="bg-slate-100 border-b border-slate-200 text-slate-600">
+              <thead className="sticky top-0 z-20 bg-slate-100 text-slate-600 shadow-[0_1px_0_0_rgb(226,232,240)]">
                 <tr>
                   <th className="px-6 py-4 font-black uppercase tracking-wider text-xs">รหัสทรัพย์สิน</th>
                   <th className="px-6 py-4 font-black uppercase tracking-wider text-xs">รายละเอียด</th>
@@ -542,7 +560,7 @@ function AssetRegister() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {assets.map((a) => (
+                {pagedAssets.map((a) => (
                   <tr key={a.id} className="hover:bg-blue-50/50 transition">
                     <td className="px-6 py-4 font-mono font-bold text-slate-700">{a.assetCode}</td>
                     <td className="px-6 py-4 font-semibold text-slate-700 flex items-center gap-1.5">
@@ -594,6 +612,57 @@ function AssetRegister() {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* 🌟 [paging] แถบแบ่งหน้า — ซ่อนตอนกำลังโหลดหรือไม่มีข้อมูล */}
+        {!isLoading && totalItems > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-6 py-3">
+            <div className="flex items-center gap-2 text-sm text-slate-500">
+              <span>
+                แสดง <span className="font-bold text-slate-700">{startIndex + 1}–{Math.min(startIndex + pageSize, totalItems)}</span>
+                {' '}จาก <span className="font-bold text-slate-700">{totalItems.toLocaleString()}</span> รายการ
+              </span>
+              <select
+                value={pageSize}
+                onChange={(e) => { setPageSize(Number(e.target.value)); setCurrentPage(1); }}
+                className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-600 outline-none focus:border-blue-500"
+              >
+                {[10, 25, 50, 100].map(n => <option key={n} value={n}>{n} ต่อหน้า</option>)}
+              </select>
+            </div>
+
+            {totalPages > 1 && (
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setCurrentPage(1)}
+                  disabled={safePage === 1}
+                  className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm font-bold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                  title="หน้าแรก"
+                >«</button>
+                <button
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={safePage === 1}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-bold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                >ก่อนหน้า</button>
+
+                <span className="px-3 text-sm font-bold text-slate-700">
+                  {safePage} / {totalPages}
+                </span>
+
+                <button
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={safePage === totalPages}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-bold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                >ถัดไป</button>
+                <button
+                  onClick={() => setCurrentPage(totalPages)}
+                  disabled={safePage === totalPages}
+                  className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm font-bold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                  title="หน้าสุดท้าย"
+                >»</button>
+              </div>
+            )}
           </div>
         )}
       </div>
