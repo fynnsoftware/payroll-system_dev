@@ -532,6 +532,11 @@ function AssetRegister() {
                   <th className="px-6 py-4 font-black uppercase tracking-wider text-xs">บริษัท</th>
                   <th className="px-6 py-4 font-black uppercase tracking-wider text-xs">ประเภท</th>
                   <th className="px-6 py-4 font-black uppercase tracking-wider text-xs text-right">ราคาทุน</th>
+                  {/* 🌟 มูลค่าตามบัญชี ณ วันสิ้นปีปัจจุบัน (API คำนวณมาให้แล้วใน currentNbv) */}
+                  <th className="px-6 py-4 font-black uppercase tracking-wider text-xs text-right">
+                    มูลค่าปัจจุบัน
+                    <span className="ml-1 font-normal normal-case text-slate-400">(ณ สิ้นปี {new Date().getFullYear()})</span>
+                  </th>
                   <th className="px-6 py-4 font-black uppercase tracking-wider text-xs text-center">สถานะ</th>
                   <th className="px-6 py-4 font-black uppercase tracking-wider text-xs text-right">Actions</th>
                 </tr>
@@ -547,6 +552,17 @@ function AssetRegister() {
                     <td className="px-6 py-4 text-slate-600">{a.company?.companyName}</td>
                     <td className="px-6 py-4 text-slate-600">{a.category?.name}</td>
                     <td className="px-6 py-4 text-right font-mono font-semibold text-slate-700">{Number(a.cost).toLocaleString()}</td>
+                    {/* มูลค่าปัจจุบัน — เน้นสีแดงถ้าเสื่อมครบแล้ว (หรือติดลบในโหมดสูตรตรง) */}
+                    <td className={`px-6 py-4 text-right font-mono font-bold ${
+                      a.currentNbv === undefined ? 'text-slate-300'
+                        : a.currentNbv < 0 ? 'text-red-600'
+                        : a.isExpired ? 'text-red-500'
+                        : 'text-slate-800'
+                    }`}>
+                      {a.currentNbv === undefined
+                        ? '-'
+                        : a.currentNbv.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </td>
                     <td className="px-6 py-4 text-center">
                       <div className="flex flex-col items-center gap-1">
                         <span className={`px-3 py-1 rounded-full text-[11px] font-bold uppercase border ${a.isActive ? 'bg-green-100 text-green-700 border-green-200' : 'bg-slate-200 text-slate-500 border-slate-300'}`}>
