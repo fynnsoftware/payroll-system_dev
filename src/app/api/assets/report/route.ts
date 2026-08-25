@@ -13,6 +13,7 @@ import { getToken } from "next-auth/jwt";
 import { calcAssetDepreciation, getFiscalPeriod, DEFAULT_CALC_RULES, CalcRule } from "@/lib/depreciation";
 import { ensureAssetYearsClosed, getFrozenBFForYear } from "@/lib/assetYearClose";
 import { getAssetCompanyIds, isAssetCompanyAllowed, explainAssetAccessDenied } from "@/lib/assetScope";
+import { getCalcOptions } from "@/lib/assetModuleSettings";
 
 export async function GET(request: NextRequest) {
   try {
@@ -68,6 +69,7 @@ export async function GET(request: NextRequest) {
       calcTypeRows = await prisma.depreciationCalcType.findMany();
     }
     const rules: CalcRule[] = calcTypeRows;
+    const calcOptions = await getCalcOptions(); // 🌟 [residual_option]
 
     // ---------- Sheet 2: รายละเอียด ----------
     const detail = [];
@@ -81,13 +83,13 @@ export async function GET(request: NextRequest) {
       };
 
       // 🌟 ปิดงวดปีที่ผ่านไปแล้วให้อัตโนมัติก่อน (idempotent — ถ้าปิดไปแล้วจะข้าม)
-      await ensureAssetYearsClosed(prisma, a.id, assetForCalc, rules);
+      await ensureAssetYearsClosed(prisma, a.id, assetForCalc, rules, calcOptions);
 
       const frozenBF = await getFrozenBFForYear(prisma, a.id, year);
-      const calc = calcAssetDepreciation(assetForCalc, period, rules, frozenBF);
+      const calc = calcAssetDepreciation(assetForCalc, period, rules, frozenBF, calcOptions);
 
-      const residual = Number(a.cost) >= 1 ? 1 : 0;
-      const isExpired = calc.nbv <= residual;
+      const expiredThreshold = calcOptions.enforceResidualValue ? (Number(a.cost) >= 1 ? 1 : 0) : 0;
+      const isExpired = calc.nbv <= expiredThreshold;
 
       detail.push({
         assetCode: a.assetCode,

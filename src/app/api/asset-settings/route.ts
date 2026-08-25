@@ -35,10 +35,22 @@ export async function PUT(request: NextRequest) {
     if (!Number.isInteger(days) || days < 0) {
       return NextResponse.json({ error: "จำนวนวันต้องเป็นเลขจำนวนเต็มไม่ติดลบ" }, { status: 400 });
     }
+
+    // 🌟 [residual_option] ไม่ส่งมา = คงค่าเดิม (true เป็นค่าเริ่มต้นตอนสร้างแถวแรก)
+    const enforceResidual =
+      body.enforceResidualValue === undefined ? undefined : body.enforceResidualValue === true;
+
     const settings = await prisma.assetModuleSettings.upsert({
       where: { id: 1 },
-      update: { nearExpiryWarningDays: days },
-      create: { id: 1, nearExpiryWarningDays: days },
+      update: {
+        nearExpiryWarningDays: days,
+        ...(enforceResidual !== undefined ? { enforceResidualValue: enforceResidual } : {}),
+      },
+      create: {
+        id: 1,
+        nearExpiryWarningDays: days,
+        enforceResidualValue: enforceResidual ?? true,
+      },
     });
     return NextResponse.json({ message: "บันทึกการตั้งค่าสำเร็จ", data: settings }, { status: 200 });
   } catch (error) {

@@ -6,6 +6,7 @@ import { NextResponse, NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getToken } from "next-auth/jwt";
 import { getAssetCompanyIds, isAssetCompanyAllowed, explainAssetAccessDenied } from "@/lib/assetScope";
+import { validateOpeningBalance } from "@/lib/assetValidation";
 
 /**
  * เช็คสิทธิ์กับทรัพย์สินชิ้นหนึ่ง — คืน error response ถ้าไม่ผ่าน, คืน null ถ้าผ่าน
@@ -89,6 +90,34 @@ export async function PUT(
           { error: `ย้ายทรัพย์สินไปบริษัทนี้ไม่ได้: ${reason}` },
           { status: 403 },
         );
+      }
+    }
+
+    // 🔒 [validation] ตรวจยอดยกมาโดยรวมค่าเดิมกับค่าใหม่เข้าด้วยกันก่อน
+    // เพราะ PUT อาจส่งมาแค่บางฟิลด์ ถ้าตรวจเฉพาะที่ส่งมาจะพลาดเคสที่แก้วันที่ซื้อ
+    // แล้วไปขัดกับยอดยกมาเดิมที่ค้างอยู่ในฐานข้อมูล
+    const before = await prisma.asset.findUnique({ where: { id } });
+    if (before) {
+      const openingError = validateOpeningBalance({
+        cost: cost !== undefined ? Number(cost) : Number(before.cost),
+        purchaseDate: purchaseDate ? new Date(purchaseDate) : before.purchaseDate,
+        openingAccumDepr:
+          openingAccumDepr !== undefined
+            ? openingAccumDepr === "" || openingAccumDepr === null
+              ? null
+              : Number(openingAccumDepr)
+            : before.openingAccumDepr != null
+              ? Number(before.openingAccumDepr)
+              : null,
+        openingAsOfDate:
+          openingAsOfDate !== undefined
+            ? openingAsOfDate
+              ? new Date(openingAsOfDate)
+              : null
+            : before.openingAsOfDate,
+      });
+      if (openingError) {
+        return NextResponse.json({ error: openingError }, { status: 400 });
       }
     }
 

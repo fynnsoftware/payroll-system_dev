@@ -40,14 +40,24 @@ export function getFiscalPeriod(year: number): FiscalPeriod {
   return { start: new Date(Date.UTC(year, 0, 1)), end: new Date(Date.UTC(year, 11, 31)) };
 }
 
+// 🌟 [residual_option] ตัวเลือกวิธีปิดยอดค่าเสื่อมสะสม
+export interface CalcOptions {
+  /**
+   * true (ค่าเริ่มต้น) = คงมูลค่า 1 บาท — ค่าเสื่อมสะสมไม่เกิน (ราคาทุน - 1) และ NBV ไม่ต่ำกว่า 1
+   * false = คิดตามสูตรตรงๆ ไม่มีเพดาน NBV ติดลบได้ (ให้ผลตรงกับ Excel ต้นฉบับ)
+   */
+  enforceResidualValue?: boolean;
+}
+
 // ---------- ตัวช่วยคำนวณค่าเสื่อมสะสม ณ วันใดวันหนึ่ง (ใช้ร่วมกันทุกสูตร) ----------
-function buildAccumulator(asset: AssetForCalc) {
+function buildAccumulator(asset: AssetForCalc, enforceResidual: boolean) {
   const cost = Number(asset.cost);
   const rate = Number(asset.depreciationRate);
   const totalUsefulLifeDays = rate > 0 ? Math.round(365 / rate) : 0;
   const endOfLifeDate = new Date(asset.purchaseDate.getTime() + totalUsefulLifeDays * MS_PER_DAY);
   const dailyDepreciation = totalUsefulLifeDays > 0 ? cost / totalUsefulLifeDays : 0;
-  const residual = cost >= 1 ? 1 : 0; // เหลือ 1 บาทตามธรรมเนียมบัญชีไทย
+  // ปิดโหมดคงมูลค่า -> ไม่กันเงินเหลือ เสื่อมได้เต็มราคาทุน
+  const residual = enforceResidual ? (cost >= 1 ? 1 : 0) : 0;
   const depreciableBase = Math.max(0, cost - residual);
 
   const hasOpeningOverride = asset.openingAccumDepr != null && asset.openingAsOfDate != null;
@@ -64,7 +74,7 @@ function buildAccumulator(asset: AssetForCalc) {
     return Math.min(depreciableBase, Math.max(0, dailyDepreciation * days));
   };
 
-  return { cost, rate, totalUsefulLifeDays, endOfLifeDate, dailyDepreciation, residual, depreciableBase, accumulatedAt };
+  return { cost, rate, totalUsefulLifeDays, endOfLifeDate, dailyDepreciation, residual, depreciableBase, enforceResidual, accumulatedAt };
 }
 
 // ==========================================
@@ -152,11 +162,19 @@ function applyFormula(
         Math.min(acc.totalUsefulLifeDays, diffDays(period.end, asset.purchaseDate) + 1),
       );
       const raw = (acc.cost * daysUsed) / acc.totalUsefulLifeDays;
-      return Math.max(0, Math.min(raw, acc.depreciableBase - accumDeprBF));
+      // โหมดคงมูลค่า 1 บาท -> ใส่เพดานไม่ให้เกินมูลค่าที่เหลือจะเสื่อมได้
+      // โหมดสูตรตรง -> ปล่อยตามสูตร ทำให้ยอดยกไปเกินราคาทุนและ NBV ติดลบได้เหมือน Excel
+      return acc.enforceResidual
+        ? Math.max(0, Math.min(raw, acc.depreciableBase - accumDeprBF))
+        : Math.max(0, raw);
     }
 
-    case "FULL_ANNUAL_FIXED":
-      return Math.max(0, Math.min(acc.depreciableBase - accumDeprBF, acc.cost * acc.rate));
+    case "FULL_ANNUAL_FIXED": {
+      const full = acc.cost * acc.rate;
+      return acc.enforceResidual
+        ? Math.max(0, Math.min(acc.depreciableBase - accumDeprBF, full))
+        : Math.max(0, full);
+    }
     case "ZERO":
       return 0;
     default:
@@ -239,8 +257,10 @@ export function calcAssetDepreciation(
   // เพื่อใช้เป็นยอดยกมาที่ "แน่นอนตายตัว" แทนการคำนวณสดย้อนหลังจากวันที่ซื้อทุกครั้ง (กันประวัติเพี้ยนถ้า
   // มีคนแก้ rate/rule ทีหลัง) ถ้าไม่ส่งมา จะคำนวณสดตามปกติ (กรณียังไม่เคยปิดงวดปีไหนเลย)
   frozenAccumDeprBF?: number,
+  options?: CalcOptions,
 ): DepreciationResult {
-  const acc = buildAccumulator(asset);
+  const enforceResidual = options?.enforceResidualValue ?? true;
+  const acc = buildAccumulator(asset, enforceResidual);
   const dayBeforeStart = new Date(period.start.getTime() - MS_PER_DAY);
   const accumDeprBF = frozenAccumDeprBF ?? acc.accumulatedAt(dayBeforeStart);
 
@@ -257,8 +277,14 @@ export function calcAssetDepreciation(
   }
 
   const depreciationCurrentPeriod = applyFormula(matched.formulaType, { asset, period, acc, accumDeprBF });
-  const accumDeprCF = Math.min(acc.depreciableBase, accumDeprBF + depreciationCurrentPeriod);
-  const nbv = Math.max(acc.residual, acc.cost - accumDeprCF);
+
+  // 🌟 [residual_option] สองโหมดของการปิดยอด
+  //   เปิดคงมูลค่า : ค่าเสื่อมสะสมยกไปไม่เกิน (ราคาทุน - 1) และ NBV ไม่ต่ำกว่า 1
+  //   ปิดคงมูลค่า : ยกไป = ยกมา + ค่าเสื่อมงวดนี้ / NBV = ราคาทุน - ยกไป (ติดลบได้)
+  const rawAccumCF = accumDeprBF + depreciationCurrentPeriod;
+  const accumDeprCF = enforceResidual ? Math.min(acc.depreciableBase, rawAccumCF) : rawAccumCF;
+  const rawNbv = acc.cost - accumDeprCF;
+  const nbv = enforceResidual ? Math.max(acc.residual, rawNbv) : rawNbv;
   const daysUsedTotal = Math.max(0, Math.min(acc.totalUsefulLifeDays, diffDays(period.end, asset.purchaseDate) + 1));
 
   return {

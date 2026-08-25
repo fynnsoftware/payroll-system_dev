@@ -3,13 +3,15 @@
 // เรียกจาก API route (Asset Register / Asset Report) ทุกครั้งที่เปิดหน้า — เช็คว่ามีปีที่ผ่านไปแล้ว
 // (ก่อนปีปัจจุบัน) แต่ยังไม่เคยปิดหรือไม่ ถ้ามีให้คำนวณและบันทึกเป็นประวัติถาวรทันที (closedBy = "SYSTEM (Auto)")
 import { PrismaClient } from "@prisma/client";
-import { calcAssetDepreciation, getFiscalPeriod, AssetForCalc, CalcRule } from "./depreciation";
+import { calcAssetDepreciation, getFiscalPeriod, AssetForCalc, CalcRule, CalcOptions } from "./depreciation";
 
 export async function ensureAssetYearsClosed(
   prisma: PrismaClient,
   assetId: string,
   asset: AssetForCalc,
   rules: CalcRule[],
+  // 🌟 [residual_option] ต้องส่งมาให้ตรงกับที่ใช้ตอนแสดงผล ไม่งั้นยอดปิดงวดจะคนละชุดกับรายงาน
+  options?: CalcOptions,
 ): Promise<void> {
   const currentYear = new Date().getUTCFullYear();
   const uptoYear = currentYear - 1; // ปิดได้แค่ปีที่ "ผ่านไปแล้วเต็มปี" เท่านั้น ปีปัจจุบันยังเปิดอยู่เสมอ
@@ -43,7 +45,7 @@ export async function ensureAssetYearsClosed(
     }
 
     const period = getFiscalPeriod(year);
-    const result = calcAssetDepreciation(asset, period, rules, lastClosedCF);
+    const result = calcAssetDepreciation(asset, period, rules, lastClosedCF, options);
 
     await prisma.assetYearlyClose.create({
       data: {

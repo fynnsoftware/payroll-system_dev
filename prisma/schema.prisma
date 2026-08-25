@@ -185,6 +185,15 @@ model AssetYearlyClose {
 model AssetModuleSettings {
   id                    Int @id @default(1)
   nearExpiryWarningDays Int @default(0) // 0 = ปิดการแจ้งเตือนใกล้หมดอายุ (ค่าเริ่มต้นตามที่ user ตอบ)
+
+  // 🌟 [residual_option] วิธีปิดยอดค่าเสื่อมสะสม
+  //   true  (ค่าเริ่มต้น) = คงมูลค่า 1 บาทตามธรรมเนียมบัญชีไทย — ค่าเสื่อมสะสมไม่เกิน (ราคาทุน - 1)
+  //                        และมูลค่าตามบัญชีไม่ต่ำกว่า 1 บาท
+  //   false              = คิดตามสูตรตรงๆ ไม่มีเพดาน
+  //                        ค่าเสื่อมสะสมยกไป = ยกมา + ค่าเสื่อมงวดนี้
+  //                        มูลค่าตามบัญชียกไป = ราคาทุน - ค่าเสื่อมสะสมยกไป (ติดลบได้)
+  //                        โหมดนี้ให้ผลตรงกับไฟล์ Excel ต้นฉบับ รวมถึงกรณีที่ Excel ได้ค่าติดลบ
+  enforceResidualValue  Boolean @default(true)
 }
 
 model Employee {

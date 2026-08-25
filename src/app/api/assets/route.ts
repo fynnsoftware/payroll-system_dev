@@ -9,6 +9,8 @@ import { calcAssetDepreciation, getFiscalPeriod, DEFAULT_CALC_RULES, CalcRule } 
 import { ensureAssetYearsClosed, getFrozenBFForYear } from "@/lib/assetYearClose";
 import { getAssetCompanyIds, isAssetCompanyAllowed, explainAssetAccessDenied } from "@/lib/assetScope";
 import { parseAssetCode, generateAssetCodes } from "@/lib/assetCode";
+import { validateOpeningBalance } from "@/lib/assetValidation";
+import { getCalcOptions } from "@/lib/assetModuleSettings";
 
 // ==========================================
 // 🟢 GET: ดึงรายการทรัพย์สิน (รองรับ filter บริษัท + group company)
@@ -81,6 +83,7 @@ export async function GET(request: NextRequest) {
       calcTypeRows = await prisma.depreciationCalcType.findMany();
     }
     const rules: CalcRule[] = calcTypeRows;
+    const calcOptions = await getCalcOptions(); // 🌟 [residual_option]
     const currentYear = new Date().getUTCFullYear();
     const currentPeriod = getFiscalPeriod(currentYear);
 
@@ -93,11 +96,12 @@ export async function GET(request: NextRequest) {
         openingAccumDepr: a.openingAccumDepr != null ? Number(a.openingAccumDepr) : null,
         openingAsOfDate: a.openingAsOfDate,
       };
-      await ensureAssetYearsClosed(prisma, a.id, assetForCalc, rules);
+      await ensureAssetYearsClosed(prisma, a.id, assetForCalc, rules, calcOptions);
       const frozenBF = await getFrozenBFForYear(prisma, a.id, currentYear);
-      const calc = calcAssetDepreciation(assetForCalc, currentPeriod, rules, frozenBF);
-      const residual = Number(a.cost) >= 1 ? 1 : 0;
-      assetsWithStatus.push({ ...a, isExpired: calc.nbv <= residual, currentNbv: calc.nbv });
+      const calc = calcAssetDepreciation(assetForCalc, currentPeriod, rules, frozenBF, calcOptions);
+      // ถือว่าหมดอายุเมื่อเสื่อมราคาครบแล้ว — โหมดคงมูลค่าดูที่ 1 บาท, โหมดสูตรตรงดูที่ 0 หรือติดลบ
+      const expiredThreshold = calcOptions.enforceResidualValue ? (Number(a.cost) >= 1 ? 1 : 0) : 0;
+      assetsWithStatus.push({ ...a, isExpired: calc.nbv <= expiredThreshold, currentNbv: calc.nbv });
     }
 
     return NextResponse.json(assetsWithStatus, { status: 200 });
@@ -147,8 +151,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: reason }, { status: 403 });
     }
 
-    if ((openingAccumDepr && !openingAsOfDate) || (!openingAccumDepr && openingAsOfDate)) {
-      return NextResponse.json({ error: "ถ้ากรอกยอดยกมา ต้องระบุวันที่ของยอดยกมาด้วย (และในทางกลับกัน)" }, { status: 400 });
+    // 🔒 [validation] กันยอดยกมาที่ขัดกับวันที่ซื้อ ไม่ให้หลุดเข้าระบบ
+    const openingError = validateOpeningBalance({
+      cost: Number(cost),
+      purchaseDate: new Date(purchaseDate),
+      openingAccumDepr:
+        openingAccumDepr !== undefined && openingAccumDepr !== "" && openingAccumDepr !== null
+          ? Number(openingAccumDepr)
+          : null,
+      openingAsOfDate: openingAsOfDate ? new Date(openingAsOfDate) : null,
+    });
+    if (openingError) {
+      return NextResponse.json({ error: openingError }, { status: 400 });
     }
 
     // 🌟 [asset_duplicate] สร้างรหัสรันต่อเนื่อง โดยข้ามรหัสที่ถูกใช้ไปแล้ว
