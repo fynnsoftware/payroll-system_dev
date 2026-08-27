@@ -43,6 +43,11 @@ function AssetCompanyManagement() {
   const [companies, setCompanies] = useState<AssetCompany[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
+  // 🌟 [paging] แบ่งหน้าตามกลุ่มบริษัทแม่ ไม่ใช่ตามจำนวนแถว
+  // ถ้าตัดตามแถวดิบ บริษัทลูกอาจถูกแยกไปคนละหน้ากับแม่ ทำให้อ่านโครงสร้างไม่รู้เรื่อง
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<'CREATE' | 'EDIT'>('CREATE');
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -57,8 +62,10 @@ function AssetCompanyManagement() {
     setIsLoading(true);
     try {
       const res = await fetch('/api/asset-companies');
-      if (res.ok) setCompanies(await res.json());
-      else showToast('โหลดข้อมูลบริษัทไม่สำเร็จ', 'error');
+      if (res.ok) {
+        setCompanies(await res.json());
+        setCurrentPage(1); // โหลดชุดใหม่แล้วกลับหน้าแรก กันค้างอยู่หน้าที่ไม่มีข้อมูล
+      } else showToast('โหลดข้อมูลบริษัทไม่สำเร็จ', 'error');
     } catch {
       showToast('ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้', 'error');
     } finally {
@@ -142,19 +149,29 @@ function AssetCompanyManagement() {
   const parentOptions = companies.filter(c => !c.parentId && c.id !== editingId);
 
   // เรียงรายการเป็นโครงสร้าง: บริษัทแม่ตามด้วยบริษัทลูกของตัวเอง
-  const displayRows: { company: AssetCompany; isSub: boolean }[] = [];
+  // จัดเป็น "กลุ่ม" เพื่อให้แบ่งหน้าได้โดยไม่พรากลูกออกจากแม่
+  const groups: { company: AssetCompany; isSub: boolean }[][] = [];
   for (const primary of companies.filter(c => !c.parentId)) {
-    displayRows.push({ company: primary, isSub: false });
+    const group = [{ company: primary, isSub: false }];
     for (const sub of companies.filter(c => c.parentId === primary.id)) {
-      displayRows.push({ company: sub, isSub: true });
+      group.push({ company: sub, isSub: true });
     }
+    groups.push(group);
   }
   // บริษัทลูกที่ไม่เห็นบริษัทแม่ (ไม่ได้รับสิทธิ์บริษัทแม่) ต้องไม่หายไปจากรายการ
   for (const orphan of companies.filter(
     c => c.parentId && !companies.some(p => p.id === c.parentId),
   )) {
-    displayRows.push({ company: orphan, isSub: true });
+    groups.push([{ company: orphan, isSub: true }]);
   }
+
+  // 🌟 [paging] นับเป็นหน้าตามจำนวน "กลุ่มบริษัทแม่"
+  const totalGroups = groups.length;
+  const totalPages = Math.max(1, Math.ceil(totalGroups / pageSize));
+  const safePage = Math.min(currentPage, totalPages);
+  const startIndex = (safePage - 1) * pageSize;
+  const pagedGroups = groups.slice(startIndex, startIndex + pageSize);
+  const displayRows = pagedGroups.flat();
 
   return (
     <div className="mx-auto max-w-7xl animate-in fade-in duration-500">
@@ -182,9 +199,10 @@ function AssetCompanyManagement() {
             ยังไม่มีบริษัท คลิก "เพิ่มบริษัท" เพื่อเริ่มต้น
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          // จำกัดความสูงเพื่อให้ sticky ของหัวตารางทำงาน (ถ้าสูงตามเนื้อหาจะไม่มีอะไรให้ยึด)
+          <div className="max-h-[60vh] overflow-auto">
             <table className="w-full whitespace-nowrap text-left text-sm">
-              <thead className="border-b border-slate-200 bg-slate-100 text-slate-600">
+              <thead className="sticky top-0 z-20 bg-slate-100 text-slate-600 shadow-[0_1px_0_0_rgb(226,232,240)]">
                 <tr>
                   <th className="px-6 py-4 text-xs font-black uppercase tracking-wider">ชื่อบริษัท</th>
                   <th className="px-6 py-4 text-xs font-black uppercase tracking-wider">เลขทะเบียน</th>
@@ -244,6 +262,40 @@ function AssetCompanyManagement() {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* 🌟 [paging] แถบแบ่งหน้า — นับเป็น "กลุ่มบริษัท" เพื่อไม่ให้บริษัทลูกหลุดไปคนละหน้ากับแม่ */}
+        {!isLoading && totalGroups > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-6 py-3">
+            <div className="flex items-center gap-2 text-sm text-slate-500">
+              <span>
+                แสดง <span className="font-bold text-slate-700">{startIndex + 1}–{Math.min(startIndex + pageSize, totalGroups)}</span>
+                {' '}จาก <span className="font-bold text-slate-700">{totalGroups.toLocaleString()}</span> กลุ่มบริษัท
+                <span className="ml-1 text-slate-400">({companies.length.toLocaleString()} บริษัททั้งหมด)</span>
+              </span>
+              <select
+                value={pageSize}
+                onChange={(e) => { setPageSize(Number(e.target.value)); setCurrentPage(1); }}
+                className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-600 outline-none focus:border-blue-500"
+              >
+                {[10, 25, 50, 100].map(n => <option key={n} value={n}>{n} ต่อหน้า</option>)}
+              </select>
+            </div>
+
+            {totalPages > 1 && (
+              <div className="flex items-center gap-1">
+                <button onClick={() => setCurrentPage(1)} disabled={safePage === 1}
+                  className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm font-bold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40" title="หน้าแรก">«</button>
+                <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={safePage === 1}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-bold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">ก่อนหน้า</button>
+                <span className="px-3 text-sm font-bold text-slate-700">{safePage} / {totalPages}</span>
+                <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={safePage === totalPages}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-bold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">ถัดไป</button>
+                <button onClick={() => setCurrentPage(totalPages)} disabled={safePage === totalPages}
+                  className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm font-bold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40" title="หน้าสุดท้าย">»</button>
+              </div>
+            )}
           </div>
         )}
       </div>

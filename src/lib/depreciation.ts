@@ -304,3 +304,63 @@ export function calcAssetDepreciation(
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
+
+/**
+ * 🌟 แสดงอัตราค่าเสื่อมในรูปแบบ "อายุการใช้งาน (เปอร์เซ็นต์)" เช่น "5 ปี (20.00%)"
+ *
+ * อ่านง่ายกว่าการโชว์เปอร์เซ็นต์เปล่าๆ เพราะคนทำงานคิดเป็น "ของชิ้นนี้ใช้กี่ปี" มากกว่า
+ * ใช้ totalUsefulLifeDays ที่ engine คำนวณไว้แล้วเป็นฐาน ตัวเลขจะได้ตรงกับคอลัมน์อายุการใช้งาน
+ */
+export function formatRateWithYears(rate: number, totalUsefulLifeDays?: number): string {
+  const percentText = `${(rate * 100).toFixed(2)}%`;
+
+  const days =
+    totalUsefulLifeDays && totalUsefulLifeDays > 0
+      ? totalUsefulLifeDays
+      : rate > 0
+        ? Math.round(365 / rate)
+        : 0;
+
+  if (!days) return percentText;
+
+  const years = days / 365;
+  // 5 -> "5" | 6.666... -> "6.67" (ตัดศูนย์ท้ายทิ้งไม่ให้รก)
+  const yearsText = Number.isInteger(years)
+    ? String(years)
+    : years.toFixed(2).replace(/\.?0+$/, "");
+
+  return `${yearsText} ปี (${percentText})`;
+}
+
+/**
+ * 🌟 [bf_consistency] คำนวณ "ค่าเสื่อมสะสมยกไป" สะสมถึงสิ้นปี throughYear
+ * โดยเดินคำนวณทีละปีผ่าน engine ตัวเดียวกับที่ใช้ออกรายงาน
+ *
+ * ⚠️ ทำไมต้องมี: เดิม "ยกมา" ของงวดหนึ่งใช้วิธีคิดค่าเสื่อมสะสมดิบ ณ วันก่อนงวดเริ่ม
+ * ซึ่งไม่ได้ผ่าน rule engine จึงอาจไม่เท่ากับ "ยกไป" ของปีก่อนหน้าที่รายงานแสดงไว้
+ * (เห็นชัดเมื่อกฎใช้สูตรอย่าง FULL_ANNUAL_FIXED หรือ PRORATE_FROM_PURCHASE
+ *  ซึ่งให้ผลต่างจากการคิดตามสัดส่วนวันแบบตรงไปตรงมา)
+ *
+ * ฟังก์ชันนี้ทำให้ ยกมาของปี Y = ยกไปของปี Y-1 เสมอโดยโครงสร้าง ไม่ต้องหวังให้บังเอิญตรงกัน
+ */
+export function computeAccumDeprCFThroughYear(
+  asset: AssetForCalc,
+  rules: CalcRule[],
+  throughYear: number,
+  options?: CalcOptions,
+): number {
+  const purchaseYear = asset.purchaseDate.getUTCFullYear();
+  const openingYear = asset.openingAsOfDate ? asset.openingAsOfDate.getUTCFullYear() : null;
+
+  // ปีแรกที่ต้องเริ่มคิด — ถ้ามียอดยกมา manual ให้เริ่มปีถัดจากวันที่ของยอดนั้น
+  const startYear = openingYear !== null ? openingYear + 1 : purchaseYear;
+
+  // ค่าตั้งต้นก่อนปีแรก = ยอดยกมา manual (ถ้ามี) ไม่งั้นเริ่มจากศูนย์
+  let cf = asset.openingAccumDepr != null ? Number(asset.openingAccumDepr) : 0;
+
+  for (let y = startYear; y <= throughYear; y++) {
+    cf = calcAssetDepreciation(asset, getFiscalPeriod(y), rules, cf, options).accumDeprCF;
+  }
+
+  return cf;
+}

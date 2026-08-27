@@ -4,6 +4,7 @@
 import { NextResponse, NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { guard } from "@/lib/apiGuard";
+import { invalidateAllAssetYearlyCloses } from "@/lib/assetCloseInvalidation";
 
 // 🔒 [security] อ่านได้ทุก role ที่ล็อกอิน · แก้ได้เฉพาะ ADMIN และ ASSET
 // ⚠️ เป็นการตั้งค่าระดับระบบ (singleton) ไม่ได้แยกตามบริษัท การแก้จึงมีผลกับทุกบริษัท
@@ -40,6 +41,12 @@ export async function PUT(request: NextRequest) {
     const enforceResidual =
       body.enforceResidualValue === undefined ? undefined : body.enforceResidualValue === true;
 
+    // 🌟 ถ้าสลับโหมดคงมูลค่า วิธีคำนวณเปลี่ยน -> ยอดปิดงวดเดิมใช้ไม่ได้แล้ว
+    const before = await prisma.assetModuleSettings.findUnique({ where: { id: 1 } });
+    const residualChanged =
+      enforceResidual !== undefined &&
+      (before ? before.enforceResidualValue !== enforceResidual : enforceResidual !== true);
+
     const settings = await prisma.assetModuleSettings.upsert({
       where: { id: 1 },
       update: {
@@ -52,7 +59,19 @@ export async function PUT(request: NextRequest) {
         enforceResidualValue: enforceResidual ?? true,
       },
     });
-    return NextResponse.json({ message: "บันทึกการตั้งค่าสำเร็จ", data: settings }, { status: 200 });
+    if (residualChanged) {
+      await invalidateAllAssetYearlyCloses();
+    }
+
+    return NextResponse.json(
+      {
+        message: residualChanged
+          ? "บันทึกการตั้งค่าสำเร็จ — ระบบจะคำนวณยอดปิดงวดใหม่ทั้งหมดตามวิธีที่เลือก"
+          : "บันทึกการตั้งค่าสำเร็จ",
+        data: settings,
+      },
+      { status: 200 },
+    );
   } catch (error) {
     console.error("PUT AssetModuleSettings Error:", error);
     return NextResponse.json({ error: "บันทึกการตั้งค่าไม่สำเร็จ" }, { status: 500 });

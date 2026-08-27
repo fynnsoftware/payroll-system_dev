@@ -8,6 +8,7 @@ import React, { useState, useEffect } from 'react';
 import { BiBarChartAlt2, BiRefresh, BiBuilding, BiX, BiListUl, BiTable, BiSpreadsheet } from 'react-icons/bi';
 import { ToastProvider, useToast } from '@/components/Toast';
 import { formatDate } from '@/lib/formatDate';
+import { formatRateWithYears } from '@/lib/depreciation';
 import { exportAssetReport } from '@/lib/assetReportExport';
 
 // 🌟 [asset_hierarchy] ทะเบียนบริษัทฝั่ง asset รองรับโครงสร้างแม่-ลูก 2 ชั้นแล้ว
@@ -262,7 +263,7 @@ function SummarySheet({ report }: { report: ReportData }) {
                   </td>
                   <td className="px-4 py-2 font-mono">{row.assetCode}</td>
                   <td className="px-4 py-2">{row.description}</td>
-                  <td className="px-4 py-2 text-right font-mono">{(row.depreciationRate * 100).toFixed(2)}%</td>
+                  <td className="px-4 py-2 text-right font-mono">{formatRateWithYears(row.depreciationRate, row.totalUsefulLifeDays)}</td>
                   <td className="px-4 py-2 border-l border-slate-200 text-right font-mono">{fmt(row.cost)}</td>
                   <td className="px-4 py-2 text-right font-mono">{fmt(row.accumDeprBF)}</td>
                   <td className="px-4 py-2 text-right font-mono">{fmt(row.depreciationCurrentPeriod)}</td>
@@ -298,6 +299,13 @@ function SummarySheet({ report }: { report: ReportData }) {
 // คอลัมน์รหัสทรัพย์สินถูกตรึงไว้ด้านซ้าย (sticky) เพราะตารางกว้างเกินจอ ต้องเลื่อนแนวนอน
 // ถ้าไม่ตรึงไว้จะไล่ดูตัวเลขแล้วไม่รู้ว่าเป็นของทรัพย์สินชิ้นไหน
 function DetailSheet({ report, onSelectRow }: { report: ReportData; onSelectRow: (row: DetailRow) => void }) {
+  // 🌟 [paging] แบ่งหน้าตารางรายละเอียด — รายงานอาจมีหลายร้อยรายการ
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+
+  // เปลี่ยนรายงาน (เลือกบริษัท/ปีใหม่) ต้องกลับหน้าแรก ไม่งั้นค้างอยู่หน้าที่ไม่มีข้อมูล
+  useEffect(() => { setPage(1); }, [report]);
+
   if (report.detail.length === 0) {
     return <div className="p-10 text-center text-slate-400 font-semibold">ไม่พบทรัพย์สินในเงื่อนไขที่เลือก</div>;
   }
@@ -305,12 +313,20 @@ function DetailSheet({ report, onSelectRow }: { report: ReportData; onSelectRow:
   const thBase = 'px-3 py-3 font-black uppercase tracking-wider text-[11px] align-bottom';
   const tdBase = 'px-3 py-3';
 
+  const totalItems = report.detail.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const startIndex = (safePage - 1) * pageSize;
+  const pagedDetail = report.detail.slice(startIndex, startIndex + pageSize);
+
   return (
-    <div className="overflow-x-auto">
+    <>
+    {/* ตรึงหัวตารางไว้ด้านบนเวลาเลื่อนดู (ต้องกำหนดความสูงให้กล่องก่อน sticky ถึงจะทำงาน) */}
+    <div className="max-h-[60vh] overflow-auto">
       <table className="w-full text-left text-sm whitespace-nowrap">
-        <thead className="bg-slate-100 border-b border-slate-200 text-slate-600">
+        <thead className="sticky top-0 z-30 bg-slate-100 text-slate-600 shadow-[0_1px_0_0_rgb(226,232,240)]">
           <tr>
-            <th className={`${thBase} sticky left-0 z-10 bg-slate-100`}>รหัสทรัพย์สิน</th>
+            <th className={`${thBase} sticky left-0 z-40 bg-slate-100`}>รหัสทรัพย์สิน</th>
             <th className={thBase}>ประเภททรัพย์สิน</th>
             <th className={thBase}>รายละเอียดทรัพย์สิน</th>
             <th className={`${thBase} text-right`}>อัตราค่าเสื่อม<br />ราคาต่อปี</th>
@@ -327,7 +343,7 @@ function DetailSheet({ report, onSelectRow }: { report: ReportData; onSelectRow:
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
-          {report.detail.map((row) => (
+          {pagedDetail.map((row) => (
             <tr key={row.assetCode} onClick={() => onSelectRow(row)} className="group hover:bg-blue-50/50 transition cursor-pointer text-slate-700">
               <td className={`${tdBase} sticky left-0 z-10 bg-white font-mono font-bold group-hover:bg-blue-50/50`}>
                 <div className="flex items-center gap-2">
@@ -344,7 +360,7 @@ function DetailSheet({ report, onSelectRow }: { report: ReportData; onSelectRow:
                 {row.description}
                 {row.location && <span className="ml-1 text-xs font-normal text-slate-400">({row.location})</span>}
               </td>
-              <td className={`${tdBase} text-right font-mono`}>{(row.depreciationRate * 100).toFixed(2)}%</td>
+              <td className={`${tdBase} text-right font-mono`}>{formatRateWithYears(row.depreciationRate, row.totalUsefulLifeDays)}</td>
               <td className={`${tdBase} text-center font-mono text-slate-600`}>{formatDate(row.purchaseDate)}</td>
               <td className={`${tdBase} text-center font-mono text-slate-600`}>{formatDate(row.endOfLifeDate)}</td>
               <td className={`${tdBase} text-right font-mono`}>{row.totalUsefulLifeDays.toLocaleString()}</td>
@@ -361,7 +377,8 @@ function DetailSheet({ report, onSelectRow }: { report: ReportData; onSelectRow:
             </tr>
           ))}
 
-          {/* แถวรวมทั้งหมด — ใช้ยอดเดียวกับ Grand Total ของ sheet สรุป จะได้ตรวจทานข้ามกันได้ */}
+          {/* แถวรวมทั้งหมด — เป็นยอดของ "ทุกรายการ" ไม่ใช่เฉพาะหน้านี้
+              ใช้ยอดเดียวกับ Grand Total ของ sheet สรุป จะได้ตรวจทานข้ามกันได้ */}
           <tr className="bg-slate-800 font-black text-white">
             <td className={`${tdBase} sticky left-0 z-10 bg-slate-800`}>รวมทั้งหมด</td>
             <td className={tdBase} colSpan={8}>{report.detail.length.toLocaleString()} รายการ</td>
@@ -374,6 +391,38 @@ function DetailSheet({ report, onSelectRow }: { report: ReportData; onSelectRow:
         </tbody>
       </table>
     </div>
+
+    {/* 🌟 [paging] แถบแบ่งหน้าของตารางรายละเอียด */}
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3">
+      <div className="flex items-center gap-2 text-sm text-slate-500">
+        <span>
+          แสดง <span className="font-bold text-slate-700">{startIndex + 1}–{Math.min(startIndex + pageSize, totalItems)}</span>
+          {' '}จาก <span className="font-bold text-slate-700">{totalItems.toLocaleString()}</span> รายการ
+        </span>
+        <select
+          value={pageSize}
+          onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
+          className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-600 outline-none focus:border-blue-500"
+        >
+          {[25, 50, 100, 200].map(n => <option key={n} value={n}>{n} ต่อหน้า</option>)}
+        </select>
+      </div>
+
+      {totalPages > 1 && (
+        <div className="flex items-center gap-1">
+          <button onClick={() => setPage(1)} disabled={safePage === 1}
+            className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm font-bold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40" title="หน้าแรก">«</button>
+          <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={safePage === 1}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-bold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">ก่อนหน้า</button>
+          <span className="px-3 text-sm font-bold text-slate-700">{safePage} / {totalPages}</span>
+          <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={safePage === totalPages}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-bold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">ถัดไป</button>
+          <button onClick={() => setPage(totalPages)} disabled={safePage === totalPages}
+            className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm font-bold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40" title="หน้าสุดท้าย">»</button>
+        </div>
+      )}
+    </div>
+    </>
   );
 }
 
@@ -384,7 +433,7 @@ function RowDetailModal({ row, onClose }: { row: DetailRow; onClose: () => void 
     ['รายละเอียดทรัพย์สิน', row.description],
     ['ที่ตั้งทรัพย์สิน', row.location || '-'],
     ['บริษัท', row.companyName],
-    ['อัตราค่าเสื่อมราคาต่อปี', `${(row.depreciationRate * 100).toFixed(2)}%`],
+    ['อัตราค่าเสื่อมราคาต่อปี', formatRateWithYears(row.depreciationRate, row.totalUsefulLifeDays)],
     ['วันที่ซื้อ', formatDate(row.purchaseDate)],
     ['วันที่สิ้นสุดอายุ', formatDate(row.endOfLifeDate)],
     ['อายุการใช้งานทั้งหมด (วัน)', row.totalUsefulLifeDays.toLocaleString()],

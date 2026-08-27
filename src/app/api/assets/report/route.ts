@@ -10,7 +10,7 @@
 import { NextResponse, NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getToken } from "next-auth/jwt";
-import { calcAssetDepreciation, getFiscalPeriod, DEFAULT_CALC_RULES, CalcRule } from "@/lib/depreciation";
+import { calcAssetDepreciation, getFiscalPeriod, computeAccumDeprCFThroughYear, DEFAULT_CALC_RULES, CalcRule } from "@/lib/depreciation";
 import { ensureAssetYearsClosed, getFrozenBFForYear } from "@/lib/assetYearClose";
 import { getAssetCompanyIds, isAssetCompanyAllowed, explainAssetAccessDenied } from "@/lib/assetScope";
 import { getCalcOptions } from "@/lib/assetModuleSettings";
@@ -53,8 +53,17 @@ export async function GET(request: NextRequest) {
       companyIds = companyIds.filter((id) => allowedCompanyIds.includes(id));
     }
 
+    // 🌟 [report_period] แสดงเฉพาะทรัพย์สินที่ "มีอยู่จริงแล้ว" ณ วันสิ้นงวดที่เลือก
+    //
+    // เดิมดึงทุกรายการของบริษัทมาโดยไม่สนวันที่ซื้อ ทำให้ดูรายงานปี 2023 แล้วเห็นทรัพย์สิน
+    // ที่เพิ่งซื้อปี 2026 โผล่มาด้วย พร้อมค่าเสื่อม 0.00 และมูลค่าเท่าราคาทุนเต็มจำนวน
+    // ซึ่งทำให้ยอดรวมของงวดนั้นผิดไปทั้งรายงาน
     const assets = await prisma.asset.findMany({
-      where: { companyId: { in: companyIds }, isActive: true },
+      where: {
+        companyId: { in: companyIds },
+        isActive: true,
+        purchaseDate: { lte: period.end },
+      },
       include: { category: true, company: true },
       orderBy: { assetCode: "asc" },
     });
@@ -85,8 +94,13 @@ export async function GET(request: NextRequest) {
       // 🌟 ปิดงวดปีที่ผ่านไปแล้วให้อัตโนมัติก่อน (idempotent — ถ้าปิดไปแล้วจะข้าม)
       await ensureAssetYearsClosed(prisma, a.id, assetForCalc, rules, calcOptions);
 
+      // 🌟 [bf_consistency] ยกมาของปีนี้ = ยกไปของปีก่อนหน้าเสมอ
+      // ปีที่ปิดงวดไปแล้วใช้ยอดที่บันทึกไว้ (เร็วกว่าและตรึงประวัติไม่ให้เปลี่ยน)
+      // ปีที่ยังไม่ปิด เช่นดูรายงานล่วงหน้า ให้เดินคำนวณผ่าน engine ตัวเดียวกันแทน
       const frozenBF = await getFrozenBFForYear(prisma, a.id, year);
-      const calc = calcAssetDepreciation(assetForCalc, period, rules, frozenBF, calcOptions);
+      const accumBF =
+        frozenBF ?? computeAccumDeprCFThroughYear(assetForCalc, rules, year - 1, calcOptions);
+      const calc = calcAssetDepreciation(assetForCalc, period, rules, accumBF, calcOptions);
 
       const expiredThreshold = calcOptions.enforceResidualValue ? (Number(a.cost) >= 1 ? 1 : 0) : 0;
       const isExpired = calc.nbv <= expiredThreshold;

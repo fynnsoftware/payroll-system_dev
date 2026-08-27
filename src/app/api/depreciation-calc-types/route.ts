@@ -6,6 +6,7 @@ import { NextResponse, NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { DEFAULT_CALC_RULES, CONDITION_TYPE_OPTIONS, FORMULA_TYPE_OPTIONS } from "@/lib/depreciation";
 import { guard } from "@/lib/apiGuard";
+import { invalidateAllAssetYearlyCloses } from "@/lib/assetCloseInvalidation";
 
 // 🔒 [security] เดิมไม่มีการเช็คสิทธิ์เลย ใครก็แก้สูตรคำนวณค่าเสื่อมได้
 // ซึ่งกระทบตัวเลขทางบัญชีในทุกรายงานแบบเงียบๆ — เขียนได้เฉพาะ ADMIN เท่านั้น
@@ -57,6 +58,9 @@ export async function POST(request: NextRequest) {
         isDefault: false, // สร้างใหม่ผ่าน UI เป็น default ไม่ได้ ต้องมีแค่แถวเดียวที่ seed ไว้แต่แรก
       },
     });
+
+    // 🌟 กติกาเปลี่ยน -> ยอดปิดงวดเดิมเป็นของกติกาเก่า ต้องล้างให้คำนวณใหม่
+    await invalidateAllAssetYearlyCloses();
 
     return NextResponse.json({ message: "เพิ่มประเภทการคำนวณสำเร็จ", data: created }, { status: 201 });
   } catch (error: any) {

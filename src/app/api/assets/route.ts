@@ -5,7 +5,7 @@
 import { NextResponse, NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getToken } from "next-auth/jwt";
-import { calcAssetDepreciation, getFiscalPeriod, DEFAULT_CALC_RULES, CalcRule } from "@/lib/depreciation";
+import { calcAssetDepreciation, getFiscalPeriod, computeAccumDeprCFThroughYear, DEFAULT_CALC_RULES, CalcRule } from "@/lib/depreciation";
 import { ensureAssetYearsClosed, getFrozenBFForYear } from "@/lib/assetYearClose";
 import { getAssetCompanyIds, isAssetCompanyAllowed, explainAssetAccessDenied } from "@/lib/assetScope";
 import { parseAssetCode, generateAssetCodes } from "@/lib/assetCode";
@@ -97,8 +97,11 @@ export async function GET(request: NextRequest) {
         openingAsOfDate: a.openingAsOfDate,
       };
       await ensureAssetYearsClosed(prisma, a.id, assetForCalc, rules, calcOptions);
+      // 🌟 [bf_consistency] ใช้กฎเดียวกับหน้ารายงาน ตัวเลขสองหน้าจะได้ตรงกัน
       const frozenBF = await getFrozenBFForYear(prisma, a.id, currentYear);
-      const calc = calcAssetDepreciation(assetForCalc, currentPeriod, rules, frozenBF, calcOptions);
+      const accumBF =
+        frozenBF ?? computeAccumDeprCFThroughYear(assetForCalc, rules, currentYear - 1, calcOptions);
+      const calc = calcAssetDepreciation(assetForCalc, currentPeriod, rules, accumBF, calcOptions);
       // ถือว่าหมดอายุเมื่อเสื่อมราคาครบแล้ว — โหมดคงมูลค่าดูที่ 1 บาท, โหมดสูตรตรงดูที่ 0 หรือติดลบ
       const expiredThreshold = calcOptions.enforceResidualValue ? (Number(a.cost) >= 1 ? 1 : 0) : 0;
       assetsWithStatus.push({ ...a, isExpired: calc.nbv <= expiredThreshold, currentNbv: calc.nbv });

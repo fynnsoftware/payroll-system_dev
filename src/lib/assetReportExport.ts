@@ -6,6 +6,7 @@
 // จึงใส่ number ดิบแล้วกำหนด number format ที่ระดับ cell แทน
 import * as XLSX from "xlsx";
 import { formatDate } from "@/lib/formatDate";
+import { formatRateWithYears } from "@/lib/depreciation";
 
 export interface ExportDetailRow {
   assetCode: string;
@@ -116,7 +117,7 @@ export function buildSummarySheet(report: ExportReport): XLSX.WorkSheet {
         i === 0 ? group.category : "", // ไม่พิมพ์ชื่อประเภทซ้ำทุกแถว เหมือน pivot
         item.assetCode,
         item.description,
-        Number((item.depreciationRate * 100).toFixed(2)),
+        formatRateWithYears(item.depreciationRate, item.totalUsefulLifeDays),
         item.cost,
         item.accumDeprBF,
         item.depreciationCurrentPeriod,
@@ -173,7 +174,7 @@ export function buildDetailSheet(report: ExportReport): XLSX.WorkSheet {
     "ประเภททรัพย์สิน",
     "รายละเอียดทรัพย์สิน",
     "ที่ตั้งทรัพย์สิน",
-    "อัตราค่าเสื่อมราคาต่อปี (%)",
+    "อัตราค่าเสื่อมราคาต่อปี",
     "วันที่ซื้อ",
     "วันที่สิ้นสุดอายุ",
     "อายุการใช้งานทั้งหมด (วัน)",
@@ -196,7 +197,7 @@ export function buildDetailSheet(report: ExportReport): XLSX.WorkSheet {
       row.category,
       row.description,
       row.location || "-",
-      Number((row.depreciationRate * 100).toFixed(2)),
+      formatRateWithYears(row.depreciationRate, row.totalUsefulLifeDays),
       formatDate(row.purchaseDate),
       formatDate(row.endOfLifeDate),
       row.totalUsefulLifeDays,

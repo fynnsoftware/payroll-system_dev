@@ -2,6 +2,7 @@
 import { NextResponse, NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { guard } from "@/lib/apiGuard";
+import { invalidateAllAssetYearlyCloses } from "@/lib/assetCloseInvalidation";
 
 // 🟡 PUT: แก้ label / เงื่อนไข / สูตร / ลำดับ / เปิดปิดใช้งาน
 // (isDefault แก้ไม่ได้ผ่าน endpoint นี้ — ต้องมีแถว default เดิมเสมอเพื่อกัน engine ไม่มี fallback)
@@ -37,6 +38,9 @@ export async function PUT(
       },
     });
 
+    // 🌟 กติกาเปลี่ยน -> ล้างยอดปิดงวดเดิมที่คำนวณด้วยกติกาเก่า ให้ระบบสร้างใหม่
+    await invalidateAllAssetYearlyCloses();
+
     return NextResponse.json({ message: "อัปเดตสำเร็จ", data: updated }, { status: 200 });
   } catch (error) {
     console.error("PUT DepreciationCalcType Error:", error);
@@ -61,6 +65,7 @@ export async function DELETE(
     }
 
     await prisma.depreciationCalcType.delete({ where: { id: Number(id) } });
+    await invalidateAllAssetYearlyCloses();
     return NextResponse.json({ message: "ลบสำเร็จ" }, { status: 200 });
   } catch (error) {
     console.error("DELETE DepreciationCalcType Error:", error);
