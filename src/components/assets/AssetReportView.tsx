@@ -222,7 +222,7 @@ function AssetReport() {
 
 // 🌟 [asset_report] ตาราง "สรุปทะเบียนทรัพย์สิน" รูปแบบ pivot ตาม template
 // หัวตาราง 2 ชั้น: แถวบนมีแถบ "Values" คร่อมคอลัมน์ตัวเลขทั้ง 5 (เลียนแบบ pivot table ของ Excel)
-// คอลัมน์แยกเป็น ประเภท / รหัส / รายละเอียด / อัตราค่าเสื่อม แล้วตามด้วยกลุ่ม Sum of ...
+// คอลัมน์แยกเป็น ประเภท / รหัส / รายละเอียด / อัตราค่าเสื่อม แล้วตามด้วยกลุ่มคอลัมน์ตัวเลข
 function SummarySheet({ report }: { report: ReportData }) {
   const thBase = 'px-4 py-3 font-black uppercase tracking-wider text-[11px]';
   const dimCols = 4; // จำนวนคอลัมน์ที่ไม่ใช่ตัวเลข (ประเภท/รหัส/รายละเอียด/อัตรา)
@@ -245,11 +245,11 @@ function SummarySheet({ report }: { report: ReportData }) {
             <th className={thBase}>รหัสทรัพย์สิน</th>
             <th className={thBase}>รายละเอียดทรัพย์สิน</th>
             <th className={`${thBase} text-right`}>อัตราค่าเสื่อมราคาต่อปี</th>
-            <th className={`${thBase} border-l border-slate-300 text-right`}>Sum of ราคาทุน</th>
-            <th className={`${thBase} text-right`}>Sum of ค่าเสื่อมสะสมยกมา</th>
-            <th className={`${thBase} text-right`}>Sum of ค่าเสื่อมราคา</th>
-            <th className={`${thBase} text-right`}>Sum of ค่าเสื่อมสะสมยกไป</th>
-            <th className={`${thBase} text-right`}>Sum of มูลค่าตามบัญชียกไป</th>
+            <th className={`${thBase} border-l border-slate-300 text-right`}>ราคาทุน</th>
+            <th className={`${thBase} text-right`}>ค่าเสื่อมสะสมยกมา</th>
+            <th className={`${thBase} text-right`}>ค่าเสื่อมราคา</th>
+            <th className={`${thBase} text-right`}>ค่าเสื่อมสะสมยกไป</th>
+            <th className={`${thBase} text-right`}>มูลค่าตามบัญชียกไป</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
