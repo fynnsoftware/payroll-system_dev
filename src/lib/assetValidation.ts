@@ -16,6 +16,55 @@ export interface OpeningBalanceInput {
   openingAsOfDate?: Date | null;
 }
 
+/**
+ * 🌟 [opening_fix] แปลงค่าดิบจาก request ให้เป็นค่าที่พร้อมบันทึกลง DB
+ *
+ * ⚠️ ทำไมต้องมีฟังก์ชันนี้ — เคยเกิดบั๊กที่ "ค่าที่เอาไปตรวจ" กับ "ค่าที่เอาไปบันทึก"
+ * เขียนเงื่อนไขแยกกันคนละที่ใน route เดียวกัน แล้วเงื่อนไขฝั่งบันทึกลืมเช็ค null:
+ *
+ *     openingAccumDepr !== undefined && openingAccumDepr !== "" ? Number(...) : null
+ *
+ * หน้าจอส่ง null มาเมื่อผู้ใช้ไม่กรอก -> ผ่านทั้งสองเงื่อนไข -> Number(null) = 0
+ * ทรัพย์สินทุกชิ้นที่สร้างโดยไม่กรอกยอดยกมาจึงถูกบันทึกว่า "ยอดยกมา = 0"
+ * ซึ่งต่างจาก null อย่างสิ้นเชิงในสายตา engine (0 = ยืนยันว่าไม่เคยเสื่อม, null = ไม่มีข้อมูล)
+ *
+ * ต่อไปนี้ทั้ง validate และ persist ต้องเรียกฟังก์ชันนี้ตัวเดียวกัน จะได้ไม่มีทางหลุดอีก
+ */
+export function normalizeOpeningAmount(raw: unknown): number | null {
+  if (raw === undefined || raw === null || raw === "") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+export function normalizeOpeningDate(raw: unknown): Date | null {
+  if (raw === undefined || raw === null || raw === "") return null;
+  const d = new Date(raw as string);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * 🌟 [opening_fix] ยอดยกมาที่ใช้งานได้จริงต้องมาเป็น "คู่" เสมอ
+ *
+ * กรณี 0 + ไม่มีวันที่ ถือว่าไม่มีข้อมูล ไม่ใช่ข้อผิดพลาด — เพราะ "เสื่อมสะสมมาแล้ว 0 บาท
+ * ณ วันที่ไม่รู้" ไม่ได้บอกอะไรเลย เทียบเท่ากับไม่กรอก จึงล้างเป็น null ทั้งคู่แล้วไปต่อ
+ *
+ * เหตุผลเชิงปฏิบัติ: ข้อมูลเก่าที่ติดบั๊กด้านบนอยู่ในสภาพนี้พอดี (0 + null)
+ * ถ้าตอบ 400 ผู้ใช้จะแก้ทรัพย์สินชิ้นนั้นไม่ได้เลยแม้แต่การเปลี่ยนชื่อ — ติดตายถาวร
+ * ส่วนยอดที่มากกว่า 0 แต่ไม่มีวันที่ ยังต้องเตือนเหมือนเดิม เพราะนั่นคือข้อมูลที่ตั้งใจกรอกแต่กรอกไม่ครบ
+ */
+export function resolveOpeningBalance(rawAmount: unknown, rawDate: unknown): {
+  openingAccumDepr: number | null;
+  openingAsOfDate: Date | null;
+} {
+  const amount = normalizeOpeningAmount(rawAmount);
+  const date = normalizeOpeningDate(rawDate);
+
+  if (date === null && (amount === null || amount === 0)) {
+    return { openingAccumDepr: null, openingAsOfDate: null };
+  }
+  return { openingAccumDepr: amount, openingAsOfDate: date };
+}
+
 /** คืนข้อความ error ถ้าข้อมูลไม่สมเหตุสมผล / คืน null ถ้าผ่าน */
 export function validateOpeningBalance(input: OpeningBalanceInput): string | null {
   const { cost, purchaseDate, openingAccumDepr, openingAsOfDate } = input;

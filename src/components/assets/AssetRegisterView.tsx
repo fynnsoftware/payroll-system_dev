@@ -66,6 +66,8 @@ const emptyForm = {
   cost: '',
   depreciationRatePercent: '', // ผู้ใช้กรอกเป็น % (เช่น 20) แล้วแปลงเป็น 0.2 ตอนส่ง
   purchaseDate: '',
+  // 🌟 [opening_fix] ปิดยอดยกมาไว้เป็นค่าเริ่มต้น — ทรัพย์สินส่วนใหญ่ซื้อใหม่ ไม่มียอดยกมา
+  hasOpening: false,
   openingAccumDepr: '', // 🌟 [phase2asset_#15] ยอดยกมา manual สำหรับทรัพย์สินเก่า (optional)
   openingAsOfDate: '',
 };
@@ -185,7 +187,11 @@ function AssetRegister() {
         cost: round2(asset.cost),
         depreciationRatePercent: round2(Number(asset.depreciationRate) * 100),
         purchaseDate: asset.purchaseDate.slice(0, 10),
-        openingAccumDepr: asset.openingAccumDepr != null ? round2(asset.openingAccumDepr) : '',
+        // 🌟 [opening_fix] "มีวันที่" คือสัญญาณเดียวที่เชื่อถือได้ว่าเคยตั้งใจใส่ยอดยกมา
+        // ยอด 0 ที่ไม่มีวันที่คือข้อมูลขยะจากบั๊ก null->0 ตอนสร้าง ไม่ใช่เจตนาของผู้ใช้
+        // (เผื่อกรณียอด > 0 แต่วันที่หาย ยังเปิดกล่องให้เห็นเพื่อให้เข้าไปแก้ได้)
+        hasOpening: asset.openingAsOfDate != null || Number(asset.openingAccumDepr ?? 0) > 0,
+        openingAccumDepr: asset.openingAccumDepr != null && Number(asset.openingAccumDepr) !== 0 ? round2(asset.openingAccumDepr) : (asset.openingAsOfDate ? round2(asset.openingAccumDepr ?? 0) : ''),
         openingAsOfDate: asset.openingAsOfDate ? asset.openingAsOfDate.slice(0, 10) : '',
       });
 
@@ -216,6 +222,7 @@ function AssetRegister() {
       cost: round2(asset.cost),
       depreciationRatePercent: round2(Number(asset.depreciationRate) * 100),
       purchaseDate: asset.purchaseDate.slice(0, 10),
+      hasOpening: false,
       openingAccumDepr: '',
       openingAsOfDate: '',
     });
@@ -242,6 +249,7 @@ function AssetRegister() {
   // engine จะยึด openingAsOfDate เป็นฐานคำนวณ ทำให้ทรัพย์สินที่เพิ่งซื้อกลายเป็นเสื่อมครบทันที
   // (NBV = 1 บาท) โดยไม่มีอะไรฟ้อง จึงต้องเตือนตั้งแต่ตอนกรอก
   const openingWarning = useMemo(() => {
+    if (!formData.hasOpening) return null; // ปิดกล่องอยู่ ไม่มีอะไรให้เตือน
     if (!formData.openingAccumDepr && !formData.openingAsOfDate) return null;
 
     if (formData.openingAsOfDate && formData.purchaseDate) {
@@ -257,7 +265,7 @@ function AssetRegister() {
     }
 
     return null;
-  }, [formData.openingAccumDepr, formData.openingAsOfDate, formData.purchaseDate, formData.cost]);
+  }, [formData.hasOpening, formData.openingAccumDepr, formData.openingAsOfDate, formData.purchaseDate, formData.cost]);
 
   // 🌟 [calc_type] ประเภทการคำนวณค่าเสื่อมราคาของงวดปีปัจจุบัน
   //
@@ -278,8 +286,9 @@ function AssetRegister() {
           cost: Number(formData.cost),
           depreciationRate: rate,
           purchaseDate: new Date(formData.purchaseDate),
-          openingAccumDepr: formData.openingAccumDepr ? Number(formData.openingAccumDepr) : null,
-          openingAsOfDate: formData.openingAsOfDate ? new Date(formData.openingAsOfDate) : null,
+          // 🌟 [opening_fix] preview ต้องใช้เงื่อนไขเดียวกับตอนส่งจริง ไม่งั้นที่เห็นกับที่บันทึกจะคนละเรื่อง
+          openingAccumDepr: formData.hasOpening && formData.openingAccumDepr !== '' ? Number(formData.openingAccumDepr) : null,
+          openingAsOfDate: formData.hasOpening && formData.openingAsOfDate ? new Date(formData.openingAsOfDate) : null,
         },
         getFiscalPeriod(currentYear),
         calcRules,
@@ -290,7 +299,7 @@ function AssetRegister() {
     }
   }, [
     formData.depreciationRatePercent, formData.purchaseDate, formData.cost,
-    formData.openingAccumDepr, formData.openingAsOfDate, calcRules,
+    formData.hasOpening, formData.openingAccumDepr, formData.openingAsOfDate, calcRules,
   ]);
 
   // 🌟 [asset_duplicate] ตัวอย่างรหัสที่จะถูกสร้าง (คำนวณฝั่ง client เพื่อดูก่อนกดบันทึก)
@@ -375,8 +384,9 @@ function AssetRegister() {
           cost: formData.cost,
           depreciationRate: Number(formData.depreciationRatePercent) / 100,
           purchaseDate: formData.purchaseDate,
-          openingAccumDepr: formData.openingAccumDepr === '' ? null : formData.openingAccumDepr,
-          openingAsOfDate: formData.openingAsOfDate === '' ? null : formData.openingAsOfDate,
+          // 🌟 [opening_fix] ไม่ติ๊ก = ส่ง null ทั้งคู่เสมอ ไม่ปล่อยค่าค้างในฟอร์มหลุดไป server
+          openingAccumDepr: !formData.hasOpening || formData.openingAccumDepr === '' ? null : formData.openingAccumDepr,
+          openingAsOfDate: !formData.hasOpening || formData.openingAsOfDate === '' ? null : formData.openingAsOfDate,
           // ส่งจำนวนเฉพาะตอนสร้างใหม่ (โหมดแก้ไขไม่มีการทำซ้ำ)
           ...(modalMode === 'CREATE' ? { quantity: Number(quantity) || 1 } : {}),
         }),
@@ -785,27 +795,55 @@ function AssetRegister() {
                 <input type="date" required value={formData.purchaseDate} onChange={e => setFormData({ ...formData, purchaseDate: e.target.value })} disabled={modalMode === 'PREVIEW'} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:ring-blue-50 focus:border-blue-500 disabled:bg-slate-200 disabled:text-slate-500" />
               </div>
 
-              {/* 🌟 [phase2asset_#15] ยอดยกมา manual สำหรับทรัพย์สินเก่า (optional) — ถ้ากรอกต้องกรอกทั้งคู่ */}
-              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <p className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-500">ยอดยกมา (สำหรับทรัพย์สินเก่า — ไม่บังคับ)</p>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="mb-1.5 block text-sm font-bold text-slate-700">ค่าเสื่อมสะสมยกมา</label>
-                    {/* onBlur ปัดทศนิยมให้เหลือ 2 ตำแหน่ง กันค่าที่ paste มายาวเกินจน input ไม่ยอมรับ */}
-                  <input type="number" step="0.01" min="0" placeholder="0.00" value={formData.openingAccumDepr} onChange={e => setFormData({ ...formData, openingAccumDepr: e.target.value })} onBlur={e => setFormData({ ...formData, openingAccumDepr: e.target.value === '' ? '' : round2(e.target.value) })} disabled={modalMode === 'PREVIEW'} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:ring-blue-50 focus:border-blue-500 disabled:bg-slate-200 disabled:text-slate-500" />
-                  </div>
-                  <div>
-                    <label className="mb-1.5 block text-sm font-bold text-slate-700">ณ วันที่</label>
-                    <input type="date" value={formData.openingAsOfDate} onChange={e => setFormData({ ...formData, openingAsOfDate: e.target.value })} disabled={modalMode === 'PREVIEW'} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:ring-blue-50 focus:border-blue-500 disabled:bg-slate-200 disabled:text-slate-500" />
-                  </div>
-                </div>
-                <p className="mt-2 text-xs text-slate-400">ถ้ากรอกช่องนี้ ระบบจะใช้ยอดนี้เป็นฐานคำนวณแทนวันที่ซื้อ (กรอกทั้งคู่หรือเว้นว่างทั้งคู่)</p>
+              {/* 🌟 [phase2asset_#15] ยอดยกมา manual สำหรับทรัพย์สินเก่า (optional) — ถ้ากรอกต้องกรอกทั้งคู่
+                  🌟 [opening_fix] คุมด้วย checkbox ปิดไว้เป็นค่าเริ่มต้น
+                  เดิมเป็นช่องเปล่าที่เปิดรออยู่ตลอด ทำให้แยกไม่ออกระหว่าง "ตั้งใจไม่กรอก" กับ "ลืมกรอก"
+                  และเปิดช่องให้ค่า 0 หลุดลงฐานข้อมูลโดยที่ผู้ใช้ไม่ได้ตั้งใจ
+                  ตอนนี้การมียอดยกมาต้องเป็นการติ๊กอย่างจงใจเท่านั้น */}
+              <div className={`rounded-xl border p-4 shadow-sm transition ${formData.hasOpening ? 'border-blue-300 bg-blue-50/40' : 'border-slate-200 bg-white'}`}>
+                <label className="flex cursor-pointer items-start gap-2.5">
+                  <input
+                    type="checkbox"
+                    checked={formData.hasOpening}
+                    disabled={modalMode === 'PREVIEW'}
+                    onChange={e => setFormData({
+                      ...formData,
+                      hasOpening: e.target.checked,
+                      // ปิดแล้วล้างค่าทิ้งทันที ไม่เก็บค่าค้างไว้เงียบๆ
+                      // (ค่าที่มองไม่เห็นแต่ยังถูกส่งไป server คือที่มาของบั๊กรอบก่อน)
+                      openingAccumDepr: e.target.checked ? formData.openingAccumDepr : '',
+                      openingAsOfDate: e.target.checked ? formData.openingAsOfDate : '',
+                    })}
+                    className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer rounded border-slate-300 text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed"
+                  />
+                  <span>
+                    <span className="block text-sm font-bold text-slate-700">ระบุยอดยกมา (สำหรับทรัพย์สินเก่าที่เคยคิดค่าเสื่อมมาก่อน)</span>
+                    <span className="block text-xs text-slate-500">ไม่ติ๊ก = ระบบคิดค่าเสื่อมตั้งแต่วันที่ซื้อให้เอง ซึ่งเป็นกรณีปกติของทรัพย์สินที่ซื้อใหม่</span>
+                  </span>
+                </label>
 
-                {/* 🌟 คำเตือนจริง — สงวนสีส้มไว้ให้เฉพาะกรณีที่ข้อมูลจะทำให้ตัวเลขผิด */}
-                {openingWarning && (
-                  <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-2.5 text-xs font-semibold text-amber-800">
-                    <BiErrorCircle className="mt-0.5 shrink-0 text-sm" />
-                    <span>{openingWarning}</span>
+                {formData.hasOpening && (
+                  <div className="mt-4 border-t border-blue-200 pt-4 animate-in fade-in duration-200">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="mb-1.5 block text-sm font-bold text-slate-700">ค่าเสื่อมสะสมยกมา <span className="text-red-500">*</span></label>
+                        {/* onBlur ปัดทศนิยมให้เหลือ 2 ตำแหน่ง กันค่าที่ paste มายาวเกินจน input ไม่ยอมรับ */}
+                        <input type="number" step="0.01" min="0" placeholder="0.00" required value={formData.openingAccumDepr} onChange={e => setFormData({ ...formData, openingAccumDepr: e.target.value })} onBlur={e => setFormData({ ...formData, openingAccumDepr: e.target.value === '' ? '' : round2(e.target.value) })} disabled={modalMode === 'PREVIEW'} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:ring-blue-50 focus:border-blue-500 disabled:bg-slate-200 disabled:text-slate-500" />
+                      </div>
+                      <div>
+                        <label className="mb-1.5 block text-sm font-bold text-slate-700">ณ วันที่ <span className="text-red-500">*</span></label>
+                        <input type="date" required value={formData.openingAsOfDate} onChange={e => setFormData({ ...formData, openingAsOfDate: e.target.value })} disabled={modalMode === 'PREVIEW'} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:ring-blue-50 focus:border-blue-500 disabled:bg-slate-200 disabled:text-slate-500" />
+                      </div>
+                    </div>
+                    <p className="mt-2 text-xs text-slate-500">ระบบจะใช้ยอดนี้เป็นฐานตั้งต้น แล้วคิดค่าเสื่อมต่อจาก &quot;ณ วันที่&quot; ที่ระบุ — ค่าเสื่อมก่อนหน้าวันนั้นจะไม่ถูกคำนวณซ้ำ</p>
+
+                    {/* 🌟 คำเตือนจริง — สงวนสีส้มไว้ให้เฉพาะกรณีที่ข้อมูลจะทำให้ตัวเลขผิด */}
+                    {openingWarning && (
+                      <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-2.5 text-xs font-semibold text-amber-800">
+                        <BiErrorCircle className="mt-0.5 shrink-0 text-sm" />
+                        <span>{openingWarning}</span>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

@@ -9,7 +9,7 @@ import { calcAssetDepreciation, getFiscalPeriod, computeAccumDeprCFThroughYear, 
 import { ensureAssetYearsClosed, getFrozenBFForYear } from "@/lib/assetYearClose";
 import { getAssetCompanyIds, isAssetCompanyAllowed, explainAssetAccessDenied } from "@/lib/assetScope";
 import { parseAssetCode, generateAssetCodes } from "@/lib/assetCode";
-import { validateOpeningBalance } from "@/lib/assetValidation";
+import { validateOpeningBalance, resolveOpeningBalance } from "@/lib/assetValidation";
 import { getCalcOptions } from "@/lib/assetModuleSettings";
 
 // ==========================================
@@ -155,14 +155,15 @@ export async function POST(request: NextRequest) {
     }
 
     // 🔒 [validation] กันยอดยกมาที่ขัดกับวันที่ซื้อ ไม่ให้หลุดเข้าระบบ
+    // 🌟 [opening_fix] normalize ครั้งเดียวแล้วใช้ค่านี้ทั้งตอนตรวจและตอนบันทึก
+    // (เดิมเขียนเงื่อนไขแยกกันสองที่ แล้วฝั่งบันทึกลืมเช็ค null -> Number(null) = 0 หลุดลง DB)
+    const opening = resolveOpeningBalance(openingAccumDepr, openingAsOfDate);
+
     const openingError = validateOpeningBalance({
       cost: Number(cost),
       purchaseDate: new Date(purchaseDate),
-      openingAccumDepr:
-        openingAccumDepr !== undefined && openingAccumDepr !== "" && openingAccumDepr !== null
-          ? Number(openingAccumDepr)
-          : null,
-      openingAsOfDate: openingAsOfDate ? new Date(openingAsOfDate) : null,
+      openingAccumDepr: opening.openingAccumDepr,
+      openingAsOfDate: opening.openingAsOfDate,
     });
     if (openingError) {
       return NextResponse.json({ error: openingError }, { status: 400 });
@@ -193,9 +194,8 @@ export async function POST(request: NextRequest) {
       cost: Number(cost),
       depreciationRate: Number(depreciationRate),
       purchaseDate: new Date(purchaseDate),
-      openingAccumDepr:
-        openingAccumDepr !== undefined && openingAccumDepr !== "" ? Number(openingAccumDepr) : null,
-      openingAsOfDate: openingAsOfDate ? new Date(openingAsOfDate) : null,
+      openingAccumDepr: opening.openingAccumDepr,
+      openingAsOfDate: opening.openingAsOfDate,
     };
 
     // สร้างทั้งชุดใน transaction เดียว — ถ้าชิ้นไหนชน unique จะ rollback ทั้งหมด

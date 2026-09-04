@@ -6,7 +6,7 @@ import { NextResponse, NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getToken } from "next-auth/jwt";
 import { getAssetCompanyIds, isAssetCompanyAllowed, explainAssetAccessDenied } from "@/lib/assetScope";
-import { validateOpeningBalance } from "@/lib/assetValidation";
+import { validateOpeningBalance, resolveOpeningBalance } from "@/lib/assetValidation";
 
 /**
  * เช็คสิทธิ์กับทรัพย์สินชิ้นหนึ่ง — คืน error response ถ้าไม่ผ่าน, คืน null ถ้าผ่าน
@@ -97,28 +97,24 @@ export async function PUT(
     // เพราะ PUT อาจส่งมาแค่บางฟิลด์ ถ้าตรวจเฉพาะที่ส่งมาจะพลาดเคสที่แก้วันที่ซื้อ
     // แล้วไปขัดกับยอดยกมาเดิมที่ค้างอยู่ในฐานข้อมูล
     const before = await prisma.asset.findUnique({ where: { id } });
-    if (before) {
-      const openingError = validateOpeningBalance({
-        cost: cost !== undefined ? Number(cost) : Number(before.cost),
-        purchaseDate: purchaseDate ? new Date(purchaseDate) : before.purchaseDate,
-        openingAccumDepr:
-          openingAccumDepr !== undefined
-            ? openingAccumDepr === "" || openingAccumDepr === null
-              ? null
-              : Number(openingAccumDepr)
-            : before.openingAccumDepr != null
-              ? Number(before.openingAccumDepr)
-              : null,
-        openingAsOfDate:
-          openingAsOfDate !== undefined
-            ? openingAsOfDate
-              ? new Date(openingAsOfDate)
-              : null
-            : before.openingAsOfDate,
-      });
-      if (openingError) {
-        return NextResponse.json({ error: openingError }, { status: 400 });
-      }
+    if (!before) return NextResponse.json({ error: "ไม่พบทรัพย์สินนี้" }, { status: 404 });
+
+    // 🌟 [opening_fix] รวมค่าใหม่กับค่าเดิมแล้ว normalize ครั้งเดียว
+    // ใช้ผลลัพธ์ชุดนี้ทั้งตอนตรวจ ตอนเทียบว่าฐานคำนวณเปลี่ยนไหม และตอนบันทึก
+    // จะได้ไม่มีทางที่สามจุดนี้ตีความค่าเดียวกันคนละแบบอีก
+    const opening = resolveOpeningBalance(
+      openingAccumDepr !== undefined ? openingAccumDepr : before.openingAccumDepr,
+      openingAsOfDate !== undefined ? openingAsOfDate : before.openingAsOfDate,
+    );
+
+    const openingError = validateOpeningBalance({
+      cost: cost !== undefined ? Number(cost) : Number(before.cost),
+      purchaseDate: purchaseDate ? new Date(purchaseDate) : before.purchaseDate,
+      openingAccumDepr: opening.openingAccumDepr,
+      openingAsOfDate: opening.openingAsOfDate,
+    });
+    if (openingError) {
+      return NextResponse.json({ error: openingError }, { status: 400 });
     }
 
     // 🐛 [bug] ถ้าแก้ "ตัวตั้งต้นของการคำนวณ" (ราคาทุน / อัตราค่าเสื่อม / วันที่ซื้อ / ยอดยกมา)
@@ -132,23 +128,28 @@ export async function PUT(
     // เดิมตั้งใจให้แถวปิดงวด immutable แต่มันสมเหตุสมผลเฉพาะตอนที่ "ข้อมูลตั้งต้นไม่เปลี่ยน"
     // พอตัวตั้งต้นเปลี่ยน ประวัติที่คำนวณจากของเก่าก็ผิดไปด้วย ต้องสร้างใหม่ทั้งชุด
     // (ปลอดภัยเพราะแถวพวกนี้ระบบสร้างเองอัตโนมัติ closedBy = "SYSTEM (Auto)" ไม่ใช่ที่คนอนุมัติ)
-    const existing = await prisma.asset.findUnique({ where: { id } });
-    if (existing) {
-      const changedCalcBasis =
-        (cost !== undefined && Number(cost) !== Number(existing.cost)) ||
-        (depreciationRate !== undefined &&
-          Number(depreciationRate) !== Number(existing.depreciationRate)) ||
-        (purchaseDate !== undefined &&
-          new Date(purchaseDate).getTime() !== existing.purchaseDate.getTime()) ||
-        (openingAccumDepr !== undefined &&
-          Number(openingAccumDepr || 0) !== Number(existing.openingAccumDepr || 0)) ||
-        (openingAsOfDate !== undefined &&
-          (openingAsOfDate ? new Date(openingAsOfDate).getTime() : null) !==
-            (existing.openingAsOfDate ? existing.openingAsOfDate.getTime() : null));
+    // 🌟 [opening_fix] เทียบแบบแยก null ออกจาก 0 ให้ชัด
+    // เดิมใช้ `Number(x || 0)` ซึ่งยุบ null กับ 0 เป็นค่าเดียวกัน ทำให้การเปลี่ยนจาก
+    // "ไม่มียอดยกมา" เป็น "ยอดยกมา 0" (คนละความหมายกันสิ้นเชิงในสายตา engine) ไม่ถูกจับว่าเปลี่ยน
+    const sameOpeningAmount =
+      (opening.openingAccumDepr === null) === (before.openingAccumDepr === null) &&
+      (opening.openingAccumDepr === null ||
+        Number(opening.openingAccumDepr) === Number(before.openingAccumDepr));
+    const sameOpeningDate =
+      (opening.openingAsOfDate ? opening.openingAsOfDate.getTime() : null) ===
+      (before.openingAsOfDate ? before.openingAsOfDate.getTime() : null);
 
-      if (changedCalcBasis) {
-        await prisma.assetYearlyClose.deleteMany({ where: { assetId: id } });
-      }
+    const changedCalcBasis =
+      (cost !== undefined && Number(cost) !== Number(before.cost)) ||
+      (depreciationRate !== undefined &&
+        Number(depreciationRate) !== Number(before.depreciationRate)) ||
+      (purchaseDate !== undefined &&
+        new Date(purchaseDate).getTime() !== before.purchaseDate.getTime()) ||
+      !sameOpeningAmount ||
+      !sameOpeningDate;
+
+    if (changedCalcBasis) {
+      await prisma.assetYearlyClose.deleteMany({ where: { assetId: id } });
     }
 
     const updated = await prisma.asset.update({
@@ -162,8 +163,10 @@ export async function PUT(
         cost: cost !== undefined ? Number(cost) : undefined,
         depreciationRate: depreciationRate !== undefined ? Number(depreciationRate) : undefined,
         purchaseDate: purchaseDate ? new Date(purchaseDate) : undefined,
-        openingAccumDepr: openingAccumDepr !== undefined ? (openingAccumDepr === "" || openingAccumDepr === null ? null : Number(openingAccumDepr)) : undefined,
-        openingAsOfDate: openingAsOfDate !== undefined ? (openingAsOfDate ? new Date(openingAsOfDate) : null) : undefined,
+        // 🌟 [opening_fix] เขียนค่าที่ normalize แล้วเสมอ แม้การแก้ครั้งนี้จะไม่ได้แตะยอดยกมา
+        // เพื่อให้แถวเก่าที่ติดบั๊ก (0 คู่กับวันที่ว่าง) ถูกซ่อมเป็น null ให้เองตอนบันทึกครั้งถัดไป
+        openingAccumDepr: opening.openingAccumDepr,
+        openingAsOfDate: opening.openingAsOfDate,
       },
     });
 
