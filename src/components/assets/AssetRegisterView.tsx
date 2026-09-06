@@ -640,27 +640,32 @@ function AssetRegister() {
             <table className="w-full text-left text-sm whitespace-nowrap">
               <thead className="sticky top-0 z-20 bg-slate-100 text-slate-600 shadow-[0_1px_0_0_rgb(226,232,240)]">
                 <tr>
-                  <th className="px-6 py-4 font-black uppercase tracking-wider text-xs">รหัสทรัพย์สิน</th>
-                  <th className="px-6 py-4 font-black uppercase tracking-wider text-xs">รายละเอียด</th>
-                  <th className="px-6 py-4 font-black uppercase tracking-wider text-xs">บริษัท</th>
-                  <th className="px-6 py-4 font-black uppercase tracking-wider text-xs">ประเภท</th>
-                  <th className="px-6 py-4 font-black uppercase tracking-wider text-xs text-right">ราคาทุน</th>
+                  <th className="px-6 py-4 font-black tracking-wide text-sm">รหัสทรัพย์สิน</th>
+                  <th className="px-6 py-4 font-black tracking-wide text-sm">รายละเอียด</th>
+                  <th className="px-6 py-4 font-black tracking-wide text-sm">บริษัท</th>
+                  <th className="px-6 py-4 font-black tracking-wide text-sm">ประเภท</th>
+                  <th className="px-6 py-4 font-black tracking-wide text-sm text-right">ราคาทุน</th>
                   {/* 🌟 มูลค่าตามบัญชี ณ วันสิ้นปีปัจจุบัน (API คำนวณมาให้แล้วใน currentNbv) */}
-                  <th className="px-6 py-4 font-black uppercase tracking-wider text-xs text-right">
+                  <th className="px-6 py-4 font-black tracking-wide text-sm text-right">
                     มูลค่าปัจจุบัน
                     <span className="ml-1 font-normal normal-case text-slate-400">(ณ สิ้นปี {bangkokYear()})</span>
                   </th>
-                  <th className="px-6 py-4 font-black uppercase tracking-wider text-xs text-center">สถานะ</th>
-                  <th className="px-6 py-4 font-black uppercase tracking-wider text-xs text-right">Actions</th>
+                  <th className="px-6 py-4 font-black tracking-wide text-sm text-center">สถานะ</th>
+                  <th className="px-6 py-4 font-black tracking-wide text-sm text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {pagedAssets.map((a) => (
-                  <tr key={a.id} className="hover:bg-blue-50/50 transition">
+                  <tr key={a.id} className="hover:bg-blue-50/50 transition [&>td]:align-middle">
                     <td className="px-6 py-4 font-mono font-bold text-slate-700">{a.assetCode}</td>
-                    <td className="px-6 py-4 font-semibold text-slate-700 flex items-center gap-1.5">
-                      {a.description}
-                      {a.location && <span className="text-xs text-slate-400 flex items-center gap-0.5"><BiMap /> {a.location}</span>}
+                    {/* 🐛 [align] ห้ามใส่ flex ที่ <td> โดยตรง — cell จะหลุดจาก display:table-cell
+                        ทำให้ความสูงไม่ถูกจัดให้เท่าแถว และข้อความ "ลอย" ไม่ตรงแนวกับช่องอื่น
+                        ต้องครอบ div ข้างในแทน แล้วปล่อยให้ td เป็น table-cell ตามปกติ */}
+                    <td className="px-6 py-4 font-semibold text-slate-700 align-middle">
+                      <span className="flex items-center gap-1.5">
+                        {a.description}
+                        {a.location && <span className="text-xs font-normal text-slate-400 flex items-center gap-0.5"><BiMap /> {a.location}</span>}
+                      </span>
                     </td>
                     <td className="px-6 py-4 text-slate-600">{a.company?.companyName}</td>
                     <td className="px-6 py-4 text-slate-600">{a.category?.name}</td>
