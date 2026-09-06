@@ -53,6 +53,24 @@ export default function UserProfileHeader() {
   const displayEmpId =
     profile?.id || me?.username || (session?.user as any)?.employeeId || '-';
 
+  // 🌟 [asset_ui] ผู้ใช้ที่เข้ามาด้วย role ASSET ไม่ต้องแสดง "Position"
+  //
+  // เหตุผล: Position เป็นข้อมูลของฝั่ง HR/Payroll (ตำแหน่งงานในบริษัท) ซึ่งบัญชีฝั่ง Asset
+  // ส่วนใหญ่ไม่มี Employee ผูกอยู่ ถ้ามีก็มักถูกกรอกมั่วๆ ไว้ตอนสร้างบัญชี เช่น "asset"
+  // แสดงออกไปแล้วผู้ใช้จะเข้าใจผิดว่าเป็นข้อมูลที่ระบบใช้งานจริง
+  // -> โชว์สิทธิ์การใช้งานแทน ซึ่งเป็นข้อมูลที่ตรงกับบริบทของโซนนี้
+  const currentRole = me?.role || (session?.user as any)?.role || '';
+  const ROLE_LABELS: Record<string, string> = {
+    ADMIN: 'ผู้ดูแลระบบ',
+    ASSET: 'ระบบทะเบียนทรัพย์สิน',
+    HR: 'ฝ่ายบุคคล',
+    USER: 'พนักงาน',
+  };
+  const badgeText =
+    currentRole === 'ASSET' || !profile?.position
+      ? `สิทธิ์: ${ROLE_LABELS[currentRole] || currentRole || '-'}`
+      : `Position: ${profile.position}`;
+
   // บริษัทที่จะแสดง: ของ employee ก่อน ถ้าไม่มีใช้บริษัทแรกที่เป็นสมาชิกในโมดูล Asset
   const companyName =
     profile?.company?.companyName ||
@@ -91,7 +109,7 @@ export default function UserProfileHeader() {
             {profile?.department ? ` | ${profile.department}` : ''}
           </p>
           <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-blue-600">
-            {profile?.position ? `Position: ${profile.position}` : `สิทธิ์: ${me?.role || '-'}`}
+            {badgeText}
           </span>
         </div>
       </div>

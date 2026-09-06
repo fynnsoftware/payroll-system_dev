@@ -7,6 +7,7 @@ import Image from 'next/image';
 import { BiSearch } from 'react-icons/bi';
 // 🌟 Import useSession เพื่อตรวจสอบการล็อกอิน
 import { useSession } from 'next-auth/react'; 
+import { formatDateLong } from '@/lib/datetime';
 
 export default function PayslipList() {
   // 🌟 ดึงข้อมูล Session ของคนที่ Login อยู่
@@ -130,7 +131,7 @@ export default function PayslipList() {
         </div>
         <div className="hidden text-right lg:block relative z-10">
           <p className="mb-1 text-sm text-blue-100">Employment Starting Date</p>
-          <h5 className="text-xl font-bold">{employeeProfile?.startDate ? new Date(employeeProfile.startDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '-'}</h5>
+          <h5 className="text-xl font-bold">{formatDateLong(employeeProfile?.startDate)}</h5>
         </div>
       </div>
 

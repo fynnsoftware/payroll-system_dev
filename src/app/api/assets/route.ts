@@ -11,6 +11,7 @@ import { getAssetCompanyIds, isAssetCompanyAllowed, explainAssetAccessDenied } f
 import { parseAssetCode, generateAssetCodes } from "@/lib/assetCode";
 import { validateOpeningBalance, resolveOpeningBalance } from "@/lib/assetValidation";
 import { getCalcOptions } from "@/lib/assetModuleSettings";
+import { bangkokYear } from "@/lib/datetime";
 
 // ==========================================
 // 🟢 GET: ดึงรายการทรัพย์สิน (รองรับ filter บริษัท + group company)
@@ -21,6 +22,9 @@ export async function GET(request: NextRequest) {
     const companyId = searchParams.get("companyId");
     const includeSubCompanies = searchParams.get("includeSubCompanies") === "true";
     const categoryId = searchParams.get("categoryId");
+    // 🌟 [register_filter] กรองตามผังบัญชี — ทรัพย์สินไม่ได้ผูกบัญชีโดยตรง
+    // ความสัมพันธ์คือ Asset -> AssetCategory -> AssetAccountType จึงกรองผ่าน category
+    const accountTypeId = searchParams.get("accountTypeId");
     const search = searchParams.get("search");
     const statusFilter = searchParams.get("status"); // ACTIVE | TERMINATED | ALL
 
@@ -53,6 +57,7 @@ export async function GET(request: NextRequest) {
     }
 
     if (categoryId) where.categoryId = Number(categoryId);
+    if (accountTypeId) where.category = { accountTypeId: Number(accountTypeId) };
 
     if (statusFilter === "ACTIVE") where.isActive = true;
     else if (statusFilter === "TERMINATED") where.isActive = false;
@@ -84,7 +89,7 @@ export async function GET(request: NextRequest) {
     }
     const rules: CalcRule[] = calcTypeRows;
     const calcOptions = await getCalcOptions(); // 🌟 [residual_option]
-    const currentYear = new Date().getUTCFullYear();
+    const currentYear = bangkokYear(); // 🌟 [timezone] ยึดเวลาไทย
     const currentPeriod = getFiscalPeriod(currentYear);
 
     const assetsWithStatus = [];
@@ -152,6 +157,16 @@ export async function POST(request: NextRequest) {
       // บอกสาเหตุให้ตรงจุด (ไม่ได้เป็นสมาชิก vs บริษัทปิดบริการ) จะได้ไม่งงว่าทำไมทำไม่ได้
       const reason = await explainAssetAccessDenied(token, Number(companyId));
       return NextResponse.json({ error: reason }, { status: 403 });
+    }
+
+    // 🔒 [per_company] ประเภททรัพย์สินเป็นของแต่ละบริษัท ต้องเช็คว่าประเภทที่ส่งมาเป็นของบริษัทนี้จริง
+    // ไม่งั้นยิง API ตรงๆ แล้วผูกทรัพย์สินไปที่ประเภทของบริษัทอื่นได้ ซึ่งทำให้รายงานจัดกลุ่มมั่ว
+    const category = await prisma.assetCategory.findUnique({ where: { id: Number(categoryId) } });
+    if (!category || category.companyId !== Number(companyId)) {
+      return NextResponse.json(
+        { error: "ประเภททรัพย์สินที่เลือกไม่ได้อยู่ในบริษัทนี้" },
+        { status: 400 },
+      );
     }
 
     // 🔒 [validation] กันยอดยกมาที่ขัดกับวันที่ซื้อ ไม่ให้หลุดเข้าระบบ

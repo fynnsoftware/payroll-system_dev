@@ -5,6 +5,7 @@ import React, { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { BiHistory, BiRefresh, BiCheckCircle, BiXCircle, BiSearch, BiFilter, BiBuildings, BiX, BiDetail } from 'react-icons/bi';
 import { redirect } from 'next/navigation';
+import { formatDate } from '@/lib/datetime';
 
 interface ImportBatch {
   id: string;
@@ -141,7 +142,7 @@ export default function ImportLogPage() {
                 filteredLogs.map((log) => (
                   <tr key={log.id} className="hover:bg-slate-50 transition">
                     <td className="px-6 py-4">
-                      <div className="font-bold text-slate-800">{new Date(log.createdAt).toLocaleDateString('en-GB')}</div>
+                      <div className="font-bold text-slate-800">{formatDate(log.createdAt)}</div>
                       <div className="text-[11px] text-slate-400 font-mono">{new Date(log.createdAt).toLocaleTimeString('en-GB')}</div>
                     </td>
                     

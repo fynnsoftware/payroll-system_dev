@@ -12,9 +12,9 @@ export interface ParsedAssetCode {
 
 /**
  * แยกรหัสเป็น prefix + ตัวเลขท้าย เพื่อใช้รันต่อ
- *   "A001"    -> { prefix: "A",       num: 1, width: 3 }
- *   "AST-007" -> { prefix: "AST-",    num: 7, width: 3 }
- *   "COPIER"  -> { prefix: "COPIER-", num: 1, width: 2 }  (ไม่มีเลขท้าย ให้เติม -01 ต่อท้าย)
+ *   "C-20260906-0001" -> { prefix: "C-20260906-", num: 1, width: 4 }   <- รูปแบบมาตรฐานปัจจุบัน
+ *   "A001"            -> { prefix: "A",             num: 1, width: 3 }   <- รูปแบบเก่า ยังรองรับ
+ *   "COPIER"          -> { prefix: "COPIER-",       num: 1, width: 2 }   (ไม่มีเลขท้าย ให้เติม -01 ต่อท้าย)
  */
 export function parseAssetCode(code: string): ParsedAssetCode {
   const trimmed = code.trim();

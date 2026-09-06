@@ -2,11 +2,13 @@
 
 import React, { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
-import { 
-  BiUserPlus, BiFilter, BiCog, BiEnvelope, BiSearch, 
-  BiCheckCircle, BiX, BiErrorCircle, BiSend, BiShow, 
-  BiHide, BiTrash 
+import {
+  BiUserPlus, BiFilter, BiCog, BiEnvelope, BiSearch,
+  BiCheckCircle, BiX, BiErrorCircle, BiSend, BiShow,
+  BiHide, BiTrash
 } from 'react-icons/bi';
+import { toDateInputValue } from '@/lib/datetime';
+import DateField from '@/components/DateField';
 
 interface Company {
   id: number;
@@ -102,7 +104,7 @@ export default function PeopleManagement() {
           department: emp.department || '-',
           role: emp.user?.role || 'USER',
           func: '-', 
-          startDate: emp.startDate ? new Date(emp.startDate).toISOString().split('T')[0] : '-',
+          startDate: emp.startDate ? toDateInputValue(emp.startDate) : '-',
           email: emp.email || '-',
           username: emp.user?.username || '-',
           isActive: emp.isActive,
@@ -525,7 +527,7 @@ Payroll Administrator`);
                 <div><label className="font-bold text-xs uppercase text-slate-500 mb-1.5 block">Position</label><input type="text" value={formData.position || ''} onChange={e => setFormData({...formData, position: e.target.value})} disabled={modalType === 'preview'} className="w-full rounded-xl border border-slate-200 p-3 outline-none disabled:bg-slate-100 disabled:text-slate-500" /></div>
                 <div><label className="font-bold text-xs uppercase text-slate-500 mb-1.5 block">Department</label><input type="text" value={formData.department || ''} onChange={e => setFormData({...formData, department: e.target.value})} disabled={modalType === 'preview'} className="w-full rounded-xl border border-slate-200 p-3 outline-none disabled:bg-slate-100 disabled:text-slate-500" /></div>
                 <div><label className="font-bold text-xs uppercase text-slate-500 mb-1.5 block">Email Address</label><input type="email" value={formData.email || ''} onChange={e => setFormData({...formData, email: e.target.value})} disabled={modalType === 'preview'} className="w-full rounded-xl border border-slate-200 p-3 outline-none disabled:bg-slate-100 disabled:text-slate-500" placeholder="example@mail.com" /></div>
-                <div><label className="font-bold text-xs uppercase text-slate-500 mb-1.5 block">Start Date</label><input type="date" value={formData.startDate || ''} onChange={e => setFormData({...formData, startDate: e.target.value})} disabled={modalType === 'preview'} className="w-full rounded-xl border border-slate-200 p-3 outline-none disabled:bg-slate-100 disabled:text-slate-500" /></div>
+                <div><label className="font-bold text-xs uppercase text-slate-500 mb-1.5 block">Start Date</label><DateField value={formData.startDate || ''} onChange={v => setFormData({...formData, startDate: v})} disabled={modalType === 'preview'} className="w-full rounded-xl border border-slate-200 p-3 pr-10 outline-none disabled:bg-slate-100 disabled:text-slate-500" /></div>
                 
                 <div className="col-span-2 p-5 bg-blue-50 rounded-2xl border border-blue-100">
                    <p className="text-xs font-black text-blue-600 uppercase mb-4 tracking-widest">System Access Credentials</p>

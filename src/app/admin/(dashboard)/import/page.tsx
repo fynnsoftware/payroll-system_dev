@@ -8,14 +8,17 @@ import {
   BiUpload, BiBuildings 
 } from 'react-icons/bi';
 import * as XLSX from 'xlsx';
+import { bangkokParts } from '@/lib/datetime';
+import DateField from '@/components/DateField';
 
 export default function ImportSalary() {
   const router = useRouter();
   
   // --- สร้างฟังก์ชันคำนวณหาวันที่ปัจจุบัน (ปี-เดือน) ---
-  const today = new Date();
-  const currentYear = today.getFullYear();
-  const currentMonth = String(today.getMonth() + 1).padStart(2, '0');
+  // 🌟 [timezone] ปี/เดือนตั้งต้นยึดเวลาไทย ไม่ใช่เวลาเครื่องผู้ใช้
+  const today = bangkokParts()!;
+  const currentYear = today.year;
+  const currentMonth = String(today.month).padStart(2, '0');
   const defaultPeriod = `${currentYear}-${currentMonth}`;      
   const defaultPayment = `${currentYear}-${currentMonth}-25`;  
 
@@ -304,11 +307,10 @@ export default function ImportSalary() {
                 </div>
                 <div>
                   <label className="mb-1.5 block text-xs font-bold text-slate-700 uppercase tracking-wide">Payment Date</label>
-                  <input 
-                    type="date" 
+                  <DateField
                     value={batchPaymentDate}
-                    onChange={e => handleConfigChange(setBatchPaymentDate, e.target.value)}
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" 
+                    onChange={v => handleConfigChange(setBatchPaymentDate, v)}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 pr-10 text-sm font-semibold text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                   />
                 </div>
               </div>

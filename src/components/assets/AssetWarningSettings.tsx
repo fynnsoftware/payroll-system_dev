@@ -3,11 +3,15 @@
 // src/components/assets/AssetWarningSettings.tsx
 // ⚠️ component กลาง ใช้ทั้ง /admin/settings และ /asset/settings
 // 🌟 [phase2asset_#16] ตั้งค่าจำนวนวันล่วงหน้าสำหรับ "ใกล้หมดอายุ" (ยังไม่ใช้เตือนจริง ค่าเริ่มต้น 0 = ปิด)
+//
+// 🌟 [per_company] หน้านี้มีค่า 2 ระดับปนกัน ต้องบอกผู้ใช้ให้ชัดว่าอันไหนเป็นอันไหน:
+//   - จำนวนวันแจ้งเตือน = ของบริษัทที่เลือกอยู่เท่านั้น
+//   - วิธีปิดยอดค่าเสื่อมสะสม = ค่ากลางทั้งระบบ เปลี่ยนทีกระทบทุกบริษัทและล้างยอดปิดงวดทั้งหมด
 import React, { useState, useEffect } from 'react';
 import { BiSave, BiInfoCircle } from 'react-icons/bi';
 import { useToast } from '@/components/Toast';
 
-export default function AssetWarningSettings() {
+export default function AssetWarningSettings({ companyId }: { companyId: number | null }) {
   const { showToast } = useToast();
   const [days, setDays] = useState('0');
   // 🌟 [residual_option] true = คงมูลค่า 1 บาท | false = คิดตามสูตรตรง (NBV ติดลบได้)
@@ -16,9 +20,10 @@ export default function AssetWarningSettings() {
   const [isSaving, setIsSaving] = useState(false);
 
   const fetchSettings = async () => {
+    if (!companyId) { setIsLoading(false); return; }
     setIsLoading(true);
     try {
-      const res = await fetch('/api/asset-settings');
+      const res = await fetch(`/api/asset-settings?companyId=${companyId}`);
       if (res.ok) {
         const data = await res.json();
         setDays(String(data.nearExpiryWarningDays ?? 0));
@@ -31,7 +36,8 @@ export default function AssetWarningSettings() {
     }
   };
 
-  useEffect(() => { fetchSettings(); }, []);
+  // โหลดใหม่ทุกครั้งที่สลับบริษัท เพราะจำนวนวันแจ้งเตือนเป็นค่ารายบริษัท
+  useEffect(() => { fetchSettings(); /* eslint-disable-next-line */ }, [companyId]);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,6 +47,7 @@ export default function AssetWarningSettings() {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          companyId,
           nearExpiryWarningDays: Number(days),
           enforceResidualValue: enforceResidual,
         }),
@@ -65,7 +72,8 @@ export default function AssetWarningSettings() {
         <p>
           ตอนนี้ระบบยังไม่มีการแจ้งเตือน "ใกล้หมดอายุ" — ค่าเริ่มต้นคือ 0 วัน (ปิดการแจ้งเตือน) ช่องนี้เตรียมไว้สำหรับใช้งานในอนาคต ทรัพย์สินจะขึ้นสถานะ "หมดอายุ" อัตโนมัติเมื่อมูลค่าตามบัญชีเหลือ 1 บาท โดยไม่ต้องตั้งค่าใดๆ เพิ่ม
           <br />
-          <span className="font-bold">หมายเหตุ:</span> ค่านี้เป็นการตั้งค่าระดับระบบ มีผลกับทุกบริษัท
+          <span className="font-bold">หมายเหตุ:</span> จำนวนวันแจ้งเตือนเป็นค่าของบริษัทที่เลือกอยู่เท่านั้น
+          ส่วน "วิธีปิดยอดค่าเสื่อมสะสม" ด้านล่างเป็นค่ากลางของทั้งระบบ
         </p>
       </div>
 
@@ -74,7 +82,10 @@ export default function AssetWarningSettings() {
       ) : (
         <form onSubmit={handleSave} className="space-y-6">
           <div className="max-w-sm">
-            <label className="mb-1.5 block text-sm font-bold text-slate-700">แจ้งเตือนล่วงหน้าก่อนหมดอายุ (วัน)</label>
+            <label className="mb-1.5 block text-sm font-bold text-slate-700">
+              แจ้งเตือนล่วงหน้าก่อนหมดอายุ (วัน)
+              <span className="ml-2 rounded-md bg-blue-100 px-1.5 py-0.5 text-[10px] font-bold text-blue-700">เฉพาะบริษัทนี้</span>
+            </label>
             <input
               type="number"
               min="0"
@@ -88,7 +99,10 @@ export default function AssetWarningSettings() {
 
           {/* 🌟 [residual_option] เลือกวิธีปิดยอดค่าเสื่อมสะสม */}
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-            <p className="mb-3 text-sm font-bold text-slate-700">วิธีปิดยอดค่าเสื่อมสะสม</p>
+            <p className="mb-3 text-sm font-bold text-slate-700">
+              วิธีปิดยอดค่าเสื่อมสะสม
+              <span className="ml-2 rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">ค่ากลางทั้งระบบ</span>
+            </p>
 
             <label className={`mb-2 flex cursor-pointer gap-3 rounded-xl border p-3 transition ${enforceResidual ? 'border-blue-400 bg-blue-50' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
               <input type="radio" checked={enforceResidual} onChange={() => setEnforceResidual(true)} className="mt-1 h-4 w-4" />
@@ -128,7 +142,7 @@ export default function AssetWarningSettings() {
           </div>
 
           <div className="flex items-center gap-3 border-t border-slate-200 pt-4">
-            <button type="submit" disabled={isSaving} className={`flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold text-white shadow-md transition ${isSaving ? 'bg-slate-400' : 'bg-blue-600 hover:bg-blue-700'}`}>
+            <button type="submit" disabled={isSaving || !companyId} className={`flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold text-white shadow-md transition ${isSaving || !companyId ? 'bg-slate-400' : 'bg-blue-600 hover:bg-blue-700'}`}>
               <BiSave /> {isSaving ? 'Saving...' : 'บันทึกการตั้งค่า'}
             </button>
             <p className="text-xs text-slate-400">มีผลกับรายงานและหน้าทะเบียนทรัพย์สินทันทีหลังบันทึก</p>

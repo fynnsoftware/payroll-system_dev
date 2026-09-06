@@ -10,6 +10,7 @@ import { prisma } from "@/lib/prisma";
 import { guard } from "@/lib/apiGuard";
 import { getAssetCompanyIds, isAssetCompanyAllowed, ASSET_MODULE_CODE } from "@/lib/assetScope";
 import { ensureModulesSeeded } from "@/lib/companyModules";
+import { ensureCompanyAssetMasterData } from "@/lib/assetMasterData";
 
 /**
  * 🌟 ตรวจความถูกต้องของบริษัทแม่ที่เลือก — คืนข้อความ error ถ้าไม่ผ่าน, null ถ้าผ่าน
@@ -152,6 +153,11 @@ export async function POST(request: NextRequest) {
 
       return company;
     });
+
+    // 🌟 [per_company] สร้างประเภททรัพย์สิน + ผังบัญชีตั้งต้นให้ทันที
+    // เพื่อให้กดเพิ่มทรัพย์สินได้เลยโดยไม่ต้องไปตั้งค่าก่อน
+    // (นอกจากนี้ยังมี lazy seed ตอน GET อีกชั้น เผื่อบริษัทเก่าที่สร้างก่อนฟีเจอร์นี้)
+    await ensureCompanyAssetMasterData(created.id);
 
     return NextResponse.json(
       { message: "สร้างบริษัทสำเร็จ!", data: created },

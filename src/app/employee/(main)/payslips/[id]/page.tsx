@@ -6,6 +6,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { BiArrowBack, BiPrinter } from 'react-icons/bi';
 import { useSession } from 'next-auth/react';
+import { formatDateLong } from '@/lib/datetime';
 
 export default function PayslipDetail() {
   const router = useRouter();
@@ -160,7 +161,7 @@ export default function PayslipDetail() {
               <div className="flex"><div className="w-32 font-bold text-gray-800">&nbsp;</div></div>
             </div>
             <div className="space-y-1">
-              <div className="flex"><div className="w-32 font-bold text-gray-800">Pay Date :</div><div className="font-semibold text-blue-700">{payslip.paymentDate ? new Date(payslip.paymentDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : `25 ${monthNames[payslip.month - 1].substring(0, 3)} ${payslip.year}`}</div></div>
+              <div className="flex"><div className="w-32 font-bold text-gray-800">Pay Date :</div><div className="font-semibold text-blue-700">{payslip.paymentDate ? formatDateLong(payslip.paymentDate) : `25 ${monthNames[payslip.month - 1].substring(0, 3)} ${payslip.year}`}</div></div>
               <div className="flex"><div className="w-32 font-bold text-gray-800">Bank :</div><div>{payslip.employee?.bank || '-'}</div></div>
               <div className="flex"><div className="w-32 font-bold text-gray-800">Bank A/C :</div><div>{payslip.employee?.bankAccount || '-'}</div></div>
             </div>

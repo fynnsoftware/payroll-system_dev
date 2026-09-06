@@ -6,13 +6,13 @@
 import { prisma } from "@/lib/prisma";
 import { CalcOptions } from "@/lib/depreciation";
 
+// ⚠️ [per_company] nearExpiryWarningDays ย้ายไปเป็นค่ารายบริษัทแล้ว
+// อ่านผ่าน getCompanyWarningDays() ใน src/lib/assetMasterData.ts แทน
 export interface AssetModuleSettingsValue {
-  nearExpiryWarningDays: number;
   enforceResidualValue: boolean;
 }
 
 const DEFAULTS: AssetModuleSettingsValue = {
-  nearExpiryWarningDays: 0,
   enforceResidualValue: true,
 };
 
@@ -22,7 +22,6 @@ export async function getAssetModuleSettings(): Promise<AssetModuleSettingsValue
     const row = await prisma.assetModuleSettings.findUnique({ where: { id: 1 } });
     if (!row) return DEFAULTS;
     return {
-      nearExpiryWarningDays: row.nearExpiryWarningDays,
       enforceResidualValue: row.enforceResidualValue,
     };
   } catch {

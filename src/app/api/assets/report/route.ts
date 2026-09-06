@@ -14,6 +14,7 @@ import { calcAssetDepreciation, getFiscalPeriod, computeAccumDeprCFThroughYear, 
 import { ensureAssetYearsClosed, getFrozenBFForYear } from "@/lib/assetYearClose";
 import { getAssetCompanyIds, isAssetCompanyAllowed, explainAssetAccessDenied } from "@/lib/assetScope";
 import { getCalcOptions } from "@/lib/assetModuleSettings";
+import { bangkokYear } from "@/lib/datetime";
 
 export async function GET(request: NextRequest) {
   try {
@@ -21,6 +22,9 @@ export async function GET(request: NextRequest) {
     const companyId = searchParams.get("companyId");
     const includeSubCompanies = searchParams.get("includeSubCompanies") === "true";
     const yearParam = searchParams.get("year");
+    // 🌟 [report_filter] กรองเพิ่มตามประเภททรัพย์สิน / ผังบัญชี (ไม่ส่งมา = ทั้งหมด)
+    const categoryIdParam = searchParams.get("categoryId");
+    const accountTypeIdParam = searchParams.get("accountTypeId");
 
     if (!companyId) {
       return NextResponse.json({ error: "กรุณาระบุบริษัท" }, { status: 400 });
@@ -40,7 +44,7 @@ export async function GET(request: NextRequest) {
     const company = await prisma.company.findUnique({ where: { id: Number(companyId) } });
     if (!company) return NextResponse.json({ error: "ไม่พบบริษัทนี้" }, { status: 404 });
 
-    const year = yearParam ? Number(yearParam) : new Date().getFullYear();
+    const year = yearParam ? Number(yearParam) : bangkokYear(); // 🌟 [timezone] ยึดเวลาไทย
     const period = getFiscalPeriod(year);
 
     let companyIds = [company.id];
@@ -63,8 +67,15 @@ export async function GET(request: NextRequest) {
         companyId: { in: companyIds },
         isActive: true,
         purchaseDate: { lte: period.end },
+        // 🌟 [report_filter] กรองตามประเภททรัพย์สิน
+        ...(categoryIdParam ? { categoryId: Number(categoryIdParam) } : {}),
+        // 🌟 [report_filter] กรองตามผังบัญชี — กรองผ่านประเภททรัพย์สินที่ผูกบัญชีนั้นอยู่
+        // (ทรัพย์สินไม่ได้ผูกบัญชีโดยตรง ความสัมพันธ์คือ Asset -> AssetCategory -> AssetAccountType)
+        ...(accountTypeIdParam
+          ? { category: { accountTypeId: Number(accountTypeIdParam) } }
+          : {}),
       },
-      include: { category: true, company: true },
+      include: { category: { include: { accountType: true } }, company: true },
       orderBy: { assetCode: "asc" },
     });
 
@@ -108,6 +119,9 @@ export async function GET(request: NextRequest) {
       detail.push({
         assetCode: a.assetCode,
         category: a.category.name,
+        // 🌟 [account_group] ผังบัญชีของประเภททรัพย์สินชิ้นนี้ (อาจไม่ได้ผูกไว้)
+        accountCode: a.category.accountType?.code ?? null,
+        accountName: a.category.accountType?.name ?? null,
         description: a.description,
         location: a.location,
         companyName: a.company.companyName,
@@ -127,7 +141,21 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // ---------- Sheet 1: สรุป (group by category, subtotal + grand total) ----------
+    // ---------- Sheet 1: สรุป — 2 ชั้น: ประเภทบัญชี > ประเภททรัพย์สิน ----------
+    //
+    // 🌟 [account_group] ชั้นบนคือผังบัญชี เพราะเวลาปิดงบต้องกระทบยอดทีละบัญชี
+    // ไม่ใช่ทีละประเภททรัพย์สิน (ประเภททรัพย์สินหลายตัวอาจลงบัญชีเดียวกัน)
+    //
+    // ⚠️ summary ยังเป็น array ของกลุ่มประเภทเหมือนเดิม (ไม่ทำลายของเก่า)
+    // แค่เพิ่ม summaryByAccount เข้ามาสำหรับหน้าจอ/Excel ที่ต้องการชั้นบัญชี
+    const totalsOf = (rows: typeof detail) => ({
+      cost: round2(sum(rows, "cost")),
+      accumDeprBF: round2(sum(rows, "accumDeprBF")),
+      depreciationCurrentPeriod: round2(sum(rows, "depreciationCurrentPeriod")),
+      accumDeprCF: round2(sum(rows, "accumDeprCF")),
+      nbv: round2(sum(rows, "nbv")),
+    });
+
     const groups = new Map<string, typeof detail>();
     for (const row of detail) {
       if (!groups.has(row.category)) groups.set(row.category, []);
@@ -137,14 +165,45 @@ export async function GET(request: NextRequest) {
     const summary = Array.from(groups.entries()).map(([categoryName, rows]) => ({
       category: categoryName,
       items: rows,
-      subtotal: {
-        cost: round2(sum(rows, "cost")),
-        accumDeprBF: round2(sum(rows, "accumDeprBF")),
-        depreciationCurrentPeriod: round2(sum(rows, "depreciationCurrentPeriod")),
-        accumDeprCF: round2(sum(rows, "accumDeprCF")),
-        nbv: round2(sum(rows, "nbv")),
-      },
+      subtotal: totalsOf(rows),
     }));
+
+    // จัดกลุ่มตามบัญชี แล้วในแต่ละบัญชีจัดกลุ่มตามประเภททรัพย์สินอีกชั้น
+    // ประเภทที่ยังไม่ได้ผูกบัญชีไว้ รวมกันไว้ท้ายสุดในกลุ่ม "ไม่ระบุบัญชี"
+    // (ซ่อนทิ้งไม่ได้ ไม่งั้นยอดรวมของกลุ่มบัญชีจะไม่เท่ากับยอดรวมทั้งหมดแล้วหาสาเหตุยาก)
+    const accountMap = new Map<string, typeof detail>();
+    for (const row of detail) {
+      const key = row.accountCode ? `${row.accountCode}|${row.accountName}` : "|";
+      if (!accountMap.has(key)) accountMap.set(key, []);
+      accountMap.get(key)!.push(row);
+    }
+
+    const summaryByAccount = Array.from(accountMap.entries())
+      .sort(([a], [b]) => {
+        // เรียงตามรหัสบัญชี ส่วน "ไม่ระบุบัญชี" ไปท้ายสุดเสมอ
+        const ca = a.split("|")[0], cb = b.split("|")[0];
+        if (!ca) return 1;
+        if (!cb) return -1;
+        return ca.localeCompare(cb);
+      })
+      .map(([key, accountRows]) => {
+        const [code, name] = key.split("|");
+        const catMap = new Map<string, typeof detail>();
+        for (const row of accountRows) {
+          if (!catMap.has(row.category)) catMap.set(row.category, []);
+          catMap.get(row.category)!.push(row);
+        }
+        return {
+          accountCode: code || null,
+          accountName: name || null,
+          categories: Array.from(catMap.entries()).map(([categoryName, rows]) => ({
+            category: categoryName,
+            items: rows,
+            subtotal: totalsOf(rows),
+          })),
+          accountTotal: totalsOf(accountRows),
+        };
+      });
 
     const grandTotal = {
       cost: round2(sum(detail, "cost")),
@@ -160,6 +219,7 @@ export async function GET(request: NextRequest) {
         periodEndDate: period.end,
         periodStartDate: period.start,
         summary,
+        summaryByAccount,
         detail,
         grandTotal,
       },

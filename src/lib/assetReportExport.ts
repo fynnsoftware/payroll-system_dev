@@ -5,12 +5,15 @@
 // ถ้าส่งเป็น "1,234.00" Excel จะมองเป็นข้อความ นำไป sum/pivot ต่อไม่ได้
 // จึงใส่ number ดิบแล้วกำหนด number format ที่ระดับ cell แทน
 import * as XLSX from "xlsx";
-import { formatDate } from "@/lib/formatDate";
+import { formatDate } from "@/lib/datetime";
 import { formatRateWithYears } from "@/lib/depreciation";
 
 export interface ExportDetailRow {
   assetCode: string;
   category: string;
+  // 🌟 [account_col] ผังบัญชีของประเภททรัพย์สินชิ้นนี้ (null = ยังไม่ได้ผูกบัญชี)
+  accountCode: string | null;
+  accountName: string | null;
   description: string;
   location: string | null;
   companyName: string;
@@ -42,18 +45,36 @@ export interface ExportReport {
   periodStartDate: string;
   periodEndDate: string;
   summary: { category: string; items: ExportDetailRow[]; subtotal: ExportTotals }[];
+  // 🌟 [account_group] แท็บสรุปจัดกลุ่ม 2 ชั้น: ประเภทบัญชี > ประเภททรัพย์สิน
+  summaryByAccount: {
+    accountCode: string | null;
+    accountName: string | null;
+    categories: { category: string; items: ExportDetailRow[]; subtotal: ExportTotals }[];
+    accountTotal: ExportTotals;
+  }[];
   detail: ExportDetailRow[];
   grandTotal: ExportTotals;
+  /**
+   * 🌟 [report_filter] คำอธิบายตัวกรองที่ใช้อยู่ เช่น "ประเภทบัญชี: 11000000 สินทรัพย์หมุนเวียน"
+   *
+   * ⚠️ จำเป็นต้องมี ไม่ใช่แค่ของประดับ — รายงานที่ถูกกรองแล้วยอด "รวมทั้งหมด"
+   * ไม่ใช่ยอดทั้งบริษัท ถ้าไฟล์ไม่บอกไว้ คนที่เปิดทีหลังจะเอาไปกระทบยอดผิด
+   */
+  filterNotes?: string[];
 }
 
 /** หัวรายงาน 3 บรรทัดที่ใส่ไว้บนสุดของทุก sheet */
 function buildHeaderRows(report: ExportReport, sheetTitle: string): any[][] {
-  return [
+  const rows: any[][] = [
     [sheetTitle],
     [`บริษัท: ${report.companyName}`],
     [`ช่วงงวด: ${formatDate(report.periodStartDate)} - ${formatDate(report.periodEndDate)}`],
-    [], // เว้นบรรทัดก่อนเริ่มตาราง
   ];
+  if (report.filterNotes && report.filterNotes.length > 0) {
+    rows.push([`ตัวกรอง: ${report.filterNotes.join(" | ")} (ยอดรวมด้านล่างเป็นยอดเฉพาะที่กรองแล้ว)`]);
+  }
+  rows.push([]); // เว้นบรรทัดก่อนเริ่มตาราง
+  return rows;
 }
 
 /**
@@ -111,30 +132,53 @@ export function buildSummarySheet(report: ExportReport): XLSX.WorkSheet {
 
   const headerRowIndex = rows.length - 1;
 
-  for (const group of report.summary) {
-    group.items.forEach((item, i) => {
+  // 🌟 [account_group] วนตามบัญชีก่อน แล้วค่อยแยกประเภททรัพย์สินในแต่ละบัญชี
+  const accountHeaderRows: number[] = []; // เก็บไว้ merge แถบหัวบัญชีให้คร่อมทั้งแถว
+  for (const acc of report.summaryByAccount) {
+    const accLabel = acc.accountCode
+      ? `${acc.accountName} (${acc.accountCode})`
+      : "ไม่ระบุบัญชี";
+
+    rows.push([`ประเภทบัญชี: ${accLabel}`, "", "", "", "", "", "", "", ""]);
+    accountHeaderRows.push(rows.length - 1);
+
+    for (const group of acc.categories) {
+      group.items.forEach((item, i) => {
+        rows.push([
+          i === 0 ? group.category : "", // ไม่พิมพ์ชื่อประเภทซ้ำทุกแถว เหมือน pivot
+          item.assetCode,
+          item.description,
+          formatRateWithYears(item.depreciationRate, item.totalUsefulLifeDays),
+          item.cost,
+          item.accumDeprBF,
+          item.depreciationCurrentPeriod,
+          item.accumDeprCF,
+          item.nbv,
+        ]);
+      });
       rows.push([
-        i === 0 ? group.category : "", // ไม่พิมพ์ชื่อประเภทซ้ำทุกแถว เหมือน pivot
-        item.assetCode,
-        item.description,
-        formatRateWithYears(item.depreciationRate, item.totalUsefulLifeDays),
-        item.cost,
-        item.accumDeprBF,
-        item.depreciationCurrentPeriod,
-        item.accumDeprCF,
-        item.nbv,
+        `${group.category} Total`,
+        "",
+        "",
+        "",
+        group.subtotal.cost,
+        group.subtotal.accumDeprBF,
+        group.subtotal.depreciationCurrentPeriod,
+        group.subtotal.accumDeprCF,
+        group.subtotal.nbv,
       ]);
-    });
+    }
+
     rows.push([
-      `${group.category} Total`,
+      `รวมบัญชี ${accLabel}`,
       "",
       "",
       "",
-      group.subtotal.cost,
-      group.subtotal.accumDeprBF,
-      group.subtotal.depreciationCurrentPeriod,
-      group.subtotal.accumDeprCF,
-      group.subtotal.nbv,
+      acc.accountTotal.cost,
+      acc.accountTotal.accumDeprBF,
+      acc.accountTotal.depreciationCurrentPeriod,
+      acc.accountTotal.accumDeprCF,
+      acc.accountTotal.nbv,
     ]);
   }
 
@@ -157,6 +201,8 @@ export function buildSummarySheet(report: ExportReport): XLSX.WorkSheet {
   sheet["!merges"] = [
     ...(sheet["!merges"] || []),
     { s: { r: valuesBandRow, c: 4 }, e: { r: valuesBandRow, c: 8 } },
+    // แถบหัวบัญชีคร่อมทั้งแถว (A-I) ไม่งั้นข้อความยาวจะถูกคอลัมน์ถัดไปบัง
+    ...accountHeaderRows.map((r) => ({ s: { r, c: 0 }, e: { r, c: 8 } })),
   ];
 
   applyNumberFormat(sheet, [4, 5, 6, 7, 8], headerRowIndex + 1, rows.length - 1);
@@ -172,6 +218,8 @@ export function buildDetailSheet(report: ExportReport): XLSX.WorkSheet {
   rows.push([
     "รหัสทรัพย์สิน",
     "ประเภททรัพย์สิน",
+    "รหัสบัญชี",
+    "ชื่อบัญชี",
     "รายละเอียดทรัพย์สิน",
     "ที่ตั้งทรัพย์สิน",
     "อัตราค่าเสื่อมราคาต่อปี",
@@ -195,6 +243,9 @@ export function buildDetailSheet(report: ExportReport): XLSX.WorkSheet {
     rows.push([
       row.assetCode,
       row.category,
+      // เก็บรหัสบัญชีเป็นข้อความ ไม่ใช่ตัวเลข ไม่งั้น Excel จะตัดศูนย์นำหน้าทิ้ง
+      row.accountCode ?? "-",
+      row.accountName ?? "-",
       row.description,
       row.location || "-",
       formatRateWithYears(row.depreciationRate, row.totalUsefulLifeDays),
@@ -216,7 +267,8 @@ export function buildDetailSheet(report: ExportReport): XLSX.WorkSheet {
   rows.push([
     "รวมทั้งหมด",
     `${report.detail.length} รายการ`,
-    "", "", "", "", "", "", "", "", "",
+    // เว้นว่างคอลัมน์ C-M (รหัสบัญชี ... เงื่อนไข) รวม 11 ช่อง ก่อนถึงคอลัมน์ตัวเลข
+    "", "", "", "", "", "", "", "", "", "", "",
     report.grandTotal.cost,
     report.grandTotal.accumDeprBF,
     report.grandTotal.depreciationCurrentPeriod,
@@ -227,7 +279,8 @@ export function buildDetailSheet(report: ExportReport): XLSX.WorkSheet {
 
   const sheet = XLSX.utils.aoa_to_sheet(rows);
   sheet["!cols"] = autoWidth(rows);
-  applyNumberFormat(sheet, [11, 12, 13, 14, 15], headerRowIndex + 1, rows.length - 1);
+  // 🌟 [account_col] คอลัมน์ตัวเลขขยับไป 2 ช่องหลังแทรกรหัสบัญชี/ชื่อบัญชี (K-O -> M-Q)
+  applyNumberFormat(sheet, [13, 14, 15, 16, 17], headerRowIndex + 1, rows.length - 1);
   return sheet;
 }
 

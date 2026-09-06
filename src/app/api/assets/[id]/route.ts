@@ -99,6 +99,21 @@ export async function PUT(
     const before = await prisma.asset.findUnique({ where: { id } });
     if (!before) return NextResponse.json({ error: "ไม่พบทรัพย์สินนี้" }, { status: 404 });
 
+    // 🔒 [per_company] ประเภทต้องเป็นของบริษัทปลายทาง (บริษัทใหม่ถ้าย้าย ไม่งั้นบริษัทเดิม)
+    // เช็คทุกครั้งที่มีการส่ง categoryId หรือ companyId มา เพราะย้ายบริษัทอย่างเดียว
+    // ก็ทำให้ประเภทเดิมกลายเป็นของคนละบริษัททันที
+    if (categoryId !== undefined || companyId !== undefined) {
+      const targetCompanyId = companyId !== undefined ? Number(companyId) : before.companyId;
+      const targetCategoryId = categoryId !== undefined ? Number(categoryId) : before.categoryId;
+      const category = await prisma.assetCategory.findUnique({ where: { id: targetCategoryId } });
+      if (!category || category.companyId !== targetCompanyId) {
+        return NextResponse.json(
+          { error: "ประเภททรัพย์สินที่เลือกไม่ได้อยู่ในบริษัทนี้ กรุณาเลือกประเภทใหม่" },
+          { status: 400 },
+        );
+      }
+    }
+
     // 🌟 [opening_fix] รวมค่าใหม่กับค่าเดิมแล้ว normalize ครั้งเดียว
     // ใช้ผลลัพธ์ชุดนี้ทั้งตอนตรวจ ตอนเทียบว่าฐานคำนวณเปลี่ยนไหม และตอนบันทึก
     // จะได้ไม่มีทางที่สามจุดนี้ตีความค่าเดียวกันคนละแบบอีก

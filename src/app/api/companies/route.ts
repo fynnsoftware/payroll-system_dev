@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { createClient } from "@supabase/supabase-js";
 import { getToken } from "next-auth/jwt";
 import { parseModuleCodes, syncCompanyModules } from "@/lib/companyModules";
+import { bangkokTimestamp } from "@/lib/datetime";
 
 
 const supabase = createClient(
@@ -157,8 +158,8 @@ export async function POST(request: NextRequest) {
       const bytes = await file.arrayBuffer();
       const buffer = Buffer.from(bytes);
 
-      const now = new Date();
-      const timestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}`;
+      // 🌟 [timezone] stamp ยึดเวลาไทย ไม่ใช่เวลา UTC ของ server
+      const timestamp = bangkokTimestamp();
       const safeOriginalName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
       const newFilename = `${timestamp}_${safeOriginalName}`;
 

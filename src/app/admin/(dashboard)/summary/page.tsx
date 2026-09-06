@@ -9,12 +9,13 @@ import {
   BiX, BiSearch, BiFilter 
 } from 'react-icons/bi';
 import * as XLSX from 'xlsx';
+import { bangkokYear } from '@/lib/datetime';
 
 export default function SalarySummary() {
   const router = useRouter();
 
   const [activeTab, setActiveTab] = useState('summary');
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString());
+  const [selectedYear, setSelectedYear] = useState(bangkokYear().toString());
   const [selectedCompany, setSelectedCompany] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   
@@ -307,9 +308,9 @@ export default function SalarySummary() {
                   onChange={(e) => setSelectedYear(e.target.value)}
                   className="bg-transparent text-sm font-bold text-slate-700 outline-none cursor-pointer w-full appearance-none"
                 >
-                  <option value={new Date().getFullYear().toString()}>{new Date().getFullYear()} (Current)</option>
-                  <option value={(new Date().getFullYear() - 1).toString()}>{new Date().getFullYear() - 1}</option>
-                  <option value={(new Date().getFullYear() - 2).toString()}>{new Date().getFullYear() - 2}</option>
+                  <option value={bangkokYear().toString()}>{bangkokYear()} (Current)</option>
+                  <option value={(bangkokYear() - 1).toString()}>{bangkokYear() - 1}</option>
+                  <option value={(bangkokYear() - 2).toString()}>{bangkokYear() - 2}</option>
                 </select>
               </div>
 

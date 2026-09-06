@@ -12,12 +12,16 @@ import {
   BiPowerOff, BiCheckShield, BiMap, BiFilter, BiCopy, BiInfoCircle, BiErrorCircle,
 } from 'react-icons/bi';
 import { ToastProvider, useToast } from '@/components/Toast';
-import { formatDate } from '@/lib/formatDate';
+import { formatDate, bangkokYear } from '@/lib/datetime';
 import { generateAssetCodes } from '@/lib/assetCode';
 import { calcAssetDepreciation, getFiscalPeriod, CalcRule } from '@/lib/depreciation';
+import DateField from '@/components/DateField';
+import MoneyField from '@/components/MoneyField';
 
 interface CompanyOption { id: number; companyName: string; companyCode: string; parentId?: number | null; }
-interface CategoryOption { id: number; name: string; }
+interface CategoryOption { id: number; name: string; codePrefix?: string | null; accountTypeId?: number | null; }
+// 🌟 [register_filter] ผังบัญชีของบริษัทที่กรองอยู่
+interface AccountTypeOption { id: number; code: string; name: string; }
 
 interface Asset {
   id: string;
@@ -88,7 +92,13 @@ function AssetRegister() {
   const isAssetPortal = pathname?.startsWith('/asset') ?? false;
   const [assets, setAssets] = useState<Asset[]>([]);
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
-  const [categories, setCategories] = useState<CategoryOption[]>([]);
+  // 🌟 [per_company] ประเภททรัพย์สินเป็นของแต่ละบริษัท จึงต้องแยกเป็น 2 ชุด
+  //   filterCategories = ของบริษัทที่เลือกในแถบกรอง
+  //   formCategories   = ของบริษัทที่เลือกในฟอร์มเพิ่ม/แก้ไข
+  // ใช้ชุดเดียวร่วมกันไม่ได้ เพราะผู้ใช้อาจกรองบริษัท A อยู่ แล้วกดเพิ่มทรัพย์สินให้บริษัท B
+  const [filterCategories, setFilterCategories] = useState<CategoryOption[]>([]);
+  const [formCategories, setFormCategories] = useState<CategoryOption[]>([]);
+  const [isLoadingFormCategories, setIsLoadingFormCategories] = useState(false);
   // 🌟 [calc_type] กฎการคำนวณค่าเสื่อม (master data) — โหลดมาเพื่อ preview ว่าทรัพย์สินนี้จะเข้าเงื่อนไขไหน
   const [calcRules, setCalcRules] = useState<CalcRule[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -97,6 +107,8 @@ function AssetRegister() {
   // 🌟 [filter] ตัวกรองรายการทรัพย์สิน
   const [filterCompanyId, setFilterCompanyId] = useState('');
   const [filterCategoryId, setFilterCategoryId] = useState('');
+  const [filterAccountTypeId, setFilterAccountTypeId] = useState('');
+  const [filterAccountTypes, setFilterAccountTypes] = useState<AccountTypeOption[]>([]);
   const [filterStatus, setFilterStatus] = useState(''); // '' = ทั้งหมด | ACTIVE | TERMINATED
 
   // 🌟 [paging] แบ่งหน้าฝั่ง client — API คืนรายการที่กรองแล้วมาทั้งชุด
@@ -127,27 +139,28 @@ function AssetRegister() {
 
   // 🌟 [filter] ส่ง filter ไปกรองที่ฝั่ง server (API รองรับ companyId/categoryId/status อยู่แล้ว)
   // ไม่กรองใน client เพราะรายการอาจยาวและอนาคตจะมี pagination
-  const fetchAll = async (overrides?: { search?: string; companyId?: string; categoryId?: string; status?: string }) => {
+  const fetchAll = async (overrides?: { search?: string; companyId?: string; categoryId?: string; accountTypeId?: string; status?: string }) => {
     setIsLoading(true);
     try {
       const params = new URLSearchParams();
       const s = overrides?.search ?? search;
       const c = overrides?.companyId ?? filterCompanyId;
       const cat = overrides?.categoryId ?? filterCategoryId;
+      const acc = overrides?.accountTypeId ?? filterAccountTypeId;
       const st = overrides?.status ?? filterStatus;
 
       if (s) params.set('search', s);
       if (c) params.set('companyId', c);
       if (cat) params.set('categoryId', cat);
+      if (acc) params.set('accountTypeId', acc);
       if (st) params.set('status', st);
 
       const qs = params.toString() ? `?${params.toString()}` : '';
-      const [assetsRes, companiesRes, categoriesRes, calcTypesRes] = await Promise.all([
+      const [assetsRes, companiesRes, calcTypesRes] = await Promise.all([
         fetch(`/api/assets${qs}`),
         // 🌟 [asset_redesign] ใช้ทะเบียนบริษัทฝั่ง asset (membership + module Assessment)
         // ไม่ใช่ /api/companies ของฝั่ง payroll อีกต่อไป
         fetch('/api/asset-companies'),
-        fetch('/api/asset-categories'),
         fetch('/api/depreciation-calc-types'),
       ]);
       if (assetsRes.ok) {
@@ -155,7 +168,6 @@ function AssetRegister() {
         setCurrentPage(1); // โหลดชุดใหม่แล้วต้องกลับหน้าแรก ไม่งั้นค้างอยู่หน้าที่ไม่มีข้อมูล
       }
       if (companiesRes.ok) setCompanies(await companiesRes.json());
-      if (categoriesRes.ok) setCategories(await categoriesRes.json());
       if (calcTypesRes.ok) {
         const data = await calcTypesRes.json();
         setCalcRules(data.types || []);
@@ -168,6 +180,50 @@ function AssetRegister() {
   };
 
   useEffect(() => { fetchAll(); }, []);
+
+  // 🌟 [per_company] ประเภทในแถบกรองต้องตามบริษัทที่กรองอยู่
+  // ไม่ได้เลือกบริษัท = ไม่รู้ว่าจะเอาประเภทของใครมาแสดง จึงล้างรายการและปิดตัวกรองไว้
+  useEffect(() => {
+    if (!filterCompanyId) { setFilterCategories([]); setFilterAccountTypes([]); return; }
+    Promise.all([
+      fetch(`/api/asset-categories?companyId=${filterCompanyId}`).then(r => r.ok ? r.json() : []),
+      fetch(`/api/asset-account-types?companyId=${filterCompanyId}`).then(r => r.ok ? r.json() : []),
+    ]).then(([cats, accs]) => { setFilterCategories(cats); setFilterAccountTypes(accs); })
+      .catch(() => { setFilterCategories([]); setFilterAccountTypes([]); });
+  }, [filterCompanyId]);
+
+  // 🌟 [asset_code] เลือกประเภทแล้วเติมรหัสถัดไปให้อัตโนมัติ
+  //
+  // ⚠️ เฉพาะโหมด CREATE เท่านั้น — โหมด EDIT ห้ามแตะ เพราะรหัสของทรัพย์สินที่มีอยู่แล้ว
+  // เป็นตัวอ้างอิงในเอกสาร/สติกเกอร์จริง เปลี่ยนให้เองโดยผู้ใช้ไม่ได้สั่งคือหายนะ
+  //
+  // ถามที่ server เพราะหน้านี้โหลดทรัพย์สินมาแค่ชุดที่ผ่านตัวกรอง ไม่ได้มีครบทั้งบริษัท
+  // เดาเลขเองจะได้รหัสซ้ำกับตัวที่ไม่ได้โหลดมา
+  useEffect(() => {
+    if (modalMode !== 'CREATE' || !formData.categoryId) return;
+    let cancelled = false;
+    fetch(`/api/assets/next-code?categoryId=${formData.categoryId}`)
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        // ประเภทที่ไม่ได้ตั้ง prefix ไว้ -> ปล่อยให้ผู้ใช้พิมพ์เอง ไม่ล้างของที่พิมพ์ค้างไว้
+        if (cancelled || !data?.nextCode) return;
+        setFormData(prev => ({ ...prev, assetCode: data.nextCode }));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+    // eslint-disable-next-line
+  }, [modalMode, formData.categoryId]);
+
+  // 🌟 [per_company] ประเภทในฟอร์มต้องตามบริษัทที่เลือกในฟอร์ม
+  useEffect(() => {
+    if (!isModalOpen || !formData.companyId) { setFormCategories([]); return; }
+    setIsLoadingFormCategories(true);
+    fetch(`/api/asset-categories?companyId=${formData.companyId}`)
+      .then(res => res.ok ? res.json() : [])
+      .then(setFormCategories)
+      .catch(() => setFormCategories([]))
+      .finally(() => setIsLoadingFormCategories(false));
+  }, [isModalOpen, formData.companyId]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -280,7 +336,7 @@ function AssetRegister() {
       return null;
     }
     try {
-      const currentYear = new Date().getUTCFullYear();
+      const currentYear = bangkokYear();
       const result = calcAssetDepreciation(
         {
           cost: Number(formData.cost),
@@ -497,7 +553,14 @@ function AssetRegister() {
           <label className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-slate-500">บริษัท</label>
           <select
             value={filterCompanyId}
-            onChange={(e) => { setFilterCompanyId(e.target.value); fetchAll({ companyId: e.target.value }); }}
+            onChange={(e) => {
+              // 🌟 [per_company] เปลี่ยนบริษัทแล้วต้องล้างตัวกรองประเภทด้วย
+              // เพราะ id ประเภทของบริษัทเดิมไม่มีอยู่ในบริษัทใหม่ ถ้าค้างไว้จะกรองได้ 0 รายการแบบไม่มีเหตุผล
+              setFilterCompanyId(e.target.value);
+              setFilterCategoryId('');
+              setFilterAccountTypeId('');
+              fetchAll({ companyId: e.target.value, categoryId: '', accountTypeId: '' });
+            }}
             className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 outline-none focus:ring-blue-50 focus:border-blue-500"
           >
             <option value="">ทุกบริษัท</option>
@@ -505,15 +568,37 @@ function AssetRegister() {
           </select>
         </div>
 
+        {/* 🌟 [register_filter] เลือกผังบัญชีแล้วตัวเลือกประเภทจะเหลือเฉพาะที่ผูกบัญชีนั้น
+            กันผู้ใช้เลือกสองอย่างที่ขัดกันเองแล้วได้ 0 รายการโดยไม่รู้สาเหตุ */}
+        <div className="min-w-[190px] flex-1">
+          <label className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-slate-500">ประเภทบัญชี</label>
+          <select
+            value={filterAccountTypeId}
+            disabled={!filterCompanyId}
+            onChange={(e) => {
+              setFilterAccountTypeId(e.target.value);
+              setFilterCategoryId('');
+              fetchAll({ accountTypeId: e.target.value, categoryId: '' });
+            }}
+            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 outline-none focus:ring-blue-50 focus:border-blue-500 disabled:bg-slate-100 disabled:text-slate-400"
+          >
+            <option value="">{filterCompanyId ? 'ทุกประเภทบัญชี' : 'เลือกบริษัทก่อน'}</option>
+            {filterAccountTypes.map(a => <option key={a.id} value={a.id}>{a.code} {a.name}</option>)}
+          </select>
+        </div>
+
         <div className="min-w-[180px] flex-1">
           <label className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-slate-500">ประเภททรัพย์สิน</label>
           <select
             value={filterCategoryId}
+            disabled={!filterCompanyId}
             onChange={(e) => { setFilterCategoryId(e.target.value); fetchAll({ categoryId: e.target.value }); }}
-            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 outline-none focus:ring-blue-50 focus:border-blue-500"
+            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 outline-none focus:ring-blue-50 focus:border-blue-500 disabled:bg-slate-100 disabled:text-slate-400"
           >
-            <option value="">ทุกประเภท</option>
-            {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            <option value="">{filterCompanyId ? 'ทุกประเภท' : 'เลือกบริษัทก่อน'}</option>
+            {filterCategories
+              .filter(c => !filterAccountTypeId || String(c.accountTypeId ?? '') === filterAccountTypeId)
+              .map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </div>
 
@@ -530,11 +615,11 @@ function AssetRegister() {
           </select>
         </div>
 
-        {(filterCompanyId || filterCategoryId || filterStatus || search) && (
+        {(filterCompanyId || filterCategoryId || filterAccountTypeId || filterStatus || search) && (
           <button
             onClick={() => {
-              setSearch(''); setFilterCompanyId(''); setFilterCategoryId(''); setFilterStatus('');
-              fetchAll({ search: '', companyId: '', categoryId: '', status: '' });
+              setSearch(''); setFilterCompanyId(''); setFilterCategoryId(''); setFilterAccountTypeId(''); setFilterStatus('');
+              fetchAll({ search: '', companyId: '', categoryId: '', accountTypeId: '', status: '' });
             }}
             className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-500 transition hover:bg-slate-50"
           >
@@ -563,7 +648,7 @@ function AssetRegister() {
                   {/* 🌟 มูลค่าตามบัญชี ณ วันสิ้นปีปัจจุบัน (API คำนวณมาให้แล้วใน currentNbv) */}
                   <th className="px-6 py-4 font-black uppercase tracking-wider text-xs text-right">
                     มูลค่าปัจจุบัน
-                    <span className="ml-1 font-normal normal-case text-slate-400">(ณ สิ้นปี {new Date().getFullYear()})</span>
+                    <span className="ml-1 font-normal normal-case text-slate-400">(ณ สิ้นปี {bangkokYear()})</span>
                   </th>
                   <th className="px-6 py-4 font-black uppercase tracking-wider text-xs text-center">สถานะ</th>
                   <th className="px-6 py-4 font-black uppercase tracking-wider text-xs text-right">Actions</th>
@@ -704,20 +789,27 @@ function AssetRegister() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="mb-1.5 block text-sm font-bold text-slate-700">รหัสทรัพย์สิน <span className="text-red-500">*</span></label>
-                  <input type="text" required placeholder="เช่น A001" value={formData.assetCode} onChange={e => setFormData({ ...formData, assetCode: e.target.value })} disabled={modalMode === 'PREVIEW'} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:ring-blue-50 focus:border-blue-500 disabled:bg-slate-200 disabled:text-slate-500" />
+                  <input type="text" required placeholder="เช่น A-20260906-0001" value={formData.assetCode} onChange={e => setFormData({ ...formData, assetCode: e.target.value })} disabled={modalMode === 'PREVIEW'} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:ring-blue-50 focus:border-blue-500 disabled:bg-slate-200 disabled:text-slate-500" />
+                  {modalMode === 'CREATE' && (
+                    <p className="mt-1 text-xs text-slate-400">ระบบเติมให้อัตโนมัติ รูปแบบ <span className="font-mono font-semibold">รหัสประเภท-วันที่-เลขรัน</span> — แก้เองได้</p>
+                  )}
                 </div>
                 <div>
                   <label className="mb-1.5 block text-sm font-bold text-slate-700">ประเภททรัพย์สิน <span className="text-red-500">*</span></label>
                   <select required value={formData.categoryId} onChange={e => setFormData({ ...formData, categoryId: e.target.value })} disabled={modalMode === 'PREVIEW'} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:ring-blue-50 focus:border-blue-500 disabled:bg-slate-200 disabled:text-slate-500">
-                    <option value="">-- เลือกประเภท --</option>
-                    {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    <option value="">
+                      {!formData.companyId ? '-- เลือกบริษัทก่อน --' : isLoadingFormCategories ? 'กำลังโหลด...' : '-- เลือกประเภท --'}
+                    </option>
+                    {formCategories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
                 </div>
               </div>
 
               <div>
                 <label className="mb-1.5 block text-sm font-bold text-slate-700">บริษัท <span className="text-red-500">*</span></label>
-                <select required value={formData.companyId} onChange={e => setFormData({ ...formData, companyId: e.target.value })} disabled={modalMode === 'PREVIEW'} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:ring-blue-50 focus:border-blue-500 disabled:bg-slate-200 disabled:text-slate-500">
+                {/* 🌟 [per_company] ย้ายบริษัทแล้วต้องล้างประเภทที่เลือกไว้
+                    ประเภทเป็นของบริษัทเดิม บันทึกไปจะได้ทรัพย์สินที่ชี้ประเภทข้ามบริษัท */}
+                <select required value={formData.companyId} onChange={e => setFormData({ ...formData, companyId: e.target.value, categoryId: '' })} disabled={modalMode === 'PREVIEW'} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:ring-blue-50 focus:border-blue-500 disabled:bg-slate-200 disabled:text-slate-500">
                   <option value="">-- เลือกบริษัท --</option>
                   {renderCompanyOptions()}
                 </select>
@@ -757,7 +849,7 @@ function AssetRegister() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="mb-1.5 block text-sm font-bold text-slate-700">ราคาทรัพย์สิน <span className="text-red-500">*</span></label>
-                  <input type="number" step="0.01" min="0" required value={formData.cost} onChange={e => setFormData({ ...formData, cost: e.target.value })} onBlur={e => setFormData({ ...formData, cost: e.target.value === '' ? '' : round2(e.target.value) })} disabled={modalMode === 'PREVIEW'} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:ring-blue-50 focus:border-blue-500 disabled:bg-slate-200 disabled:text-slate-500" />
+                  <MoneyField required value={formData.cost} onChange={v => setFormData({ ...formData, cost: v })} disabled={modalMode === 'PREVIEW'} />
                 </div>
                 {/* 🌟 เลือกอายุการใช้งานเป็นปี แล้วระบบแปลงเป็น %/ปี ให้อัตโนมัติ (เก็บลง DB เป็น % เหมือนเดิม)
                     ถ้าไม่มีในตัวเลือก เลือก "กำหนดเอง" แล้วกรอก % ตรงๆ ได้ */}
@@ -792,7 +884,7 @@ function AssetRegister() {
 
               <div>
                 <label className="mb-1.5 block text-sm font-bold text-slate-700">วันที่ซื้อ <span className="text-red-500">*</span></label>
-                <input type="date" required value={formData.purchaseDate} onChange={e => setFormData({ ...formData, purchaseDate: e.target.value })} disabled={modalMode === 'PREVIEW'} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:ring-blue-50 focus:border-blue-500 disabled:bg-slate-200 disabled:text-slate-500" />
+                <DateField required value={formData.purchaseDate} onChange={v => setFormData({ ...formData, purchaseDate: v })} disabled={modalMode === 'PREVIEW'} />
               </div>
 
               {/* 🌟 [phase2asset_#15] ยอดยกมา manual สำหรับทรัพย์สินเก่า (optional) — ถ้ากรอกต้องกรอกทั้งคู่
@@ -818,7 +910,7 @@ function AssetRegister() {
                   />
                   <span>
                     <span className="block text-sm font-bold text-slate-700">ระบุยอดยกมา (สำหรับทรัพย์สินเก่าที่เคยคิดค่าเสื่อมมาก่อน)</span>
-                    <span className="block text-xs text-slate-500">ไม่ติ๊ก = ระบบคิดค่าเสื่อมตั้งแต่วันที่ซื้อให้เอง ซึ่งเป็นกรณีปกติของทรัพย์สินที่ซื้อใหม่</span>
+                    <span className="block text-xs text-slate-500">กรณีไม่ทำเครื่องหมายหน้าข้อนี้ ระบบจะคำนวณค่าเสื่อมตั้งแต่วันเริ่มรับสินทรัพย์นั้น</span>
                   </span>
                 </label>
 
@@ -828,14 +920,14 @@ function AssetRegister() {
                       <div>
                         <label className="mb-1.5 block text-sm font-bold text-slate-700">ค่าเสื่อมสะสมยกมา <span className="text-red-500">*</span></label>
                         {/* onBlur ปัดทศนิยมให้เหลือ 2 ตำแหน่ง กันค่าที่ paste มายาวเกินจน input ไม่ยอมรับ */}
-                        <input type="number" step="0.01" min="0" placeholder="0.00" required value={formData.openingAccumDepr} onChange={e => setFormData({ ...formData, openingAccumDepr: e.target.value })} onBlur={e => setFormData({ ...formData, openingAccumDepr: e.target.value === '' ? '' : round2(e.target.value) })} disabled={modalMode === 'PREVIEW'} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:ring-blue-50 focus:border-blue-500 disabled:bg-slate-200 disabled:text-slate-500" />
+                        <MoneyField required value={formData.openingAccumDepr} onChange={v => setFormData({ ...formData, openingAccumDepr: v })} disabled={modalMode === 'PREVIEW'} />
                       </div>
                       <div>
                         <label className="mb-1.5 block text-sm font-bold text-slate-700">ณ วันที่ <span className="text-red-500">*</span></label>
-                        <input type="date" required value={formData.openingAsOfDate} onChange={e => setFormData({ ...formData, openingAsOfDate: e.target.value })} disabled={modalMode === 'PREVIEW'} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:ring-blue-50 focus:border-blue-500 disabled:bg-slate-200 disabled:text-slate-500" />
+                        <DateField required value={formData.openingAsOfDate} onChange={v => setFormData({ ...formData, openingAsOfDate: v })} disabled={modalMode === 'PREVIEW'} />
                       </div>
                     </div>
-                    <p className="mt-2 text-xs text-slate-500">ระบบจะใช้ยอดนี้เป็นฐานตั้งต้น แล้วคิดค่าเสื่อมต่อจาก &quot;ณ วันที่&quot; ที่ระบุ — ค่าเสื่อมก่อนหน้าวันนั้นจะไม่ถูกคำนวณซ้ำ</p>
+                    <p className="mt-2 text-xs text-slate-500">ระบบจะใช้ข้อมูลข้างต้นเป็นฐานในการคำนวณค่าเสื่อม (ค่าเสื่อมก่อนหน้าจะไม่นำมาคำนวณซ้ำ)</p>
 
                     {/* 🌟 คำเตือนจริง — สงวนสีส้มไว้ให้เฉพาะกรณีที่ข้อมูลจะทำให้ตัวเลขผิด */}
                     {openingWarning && (

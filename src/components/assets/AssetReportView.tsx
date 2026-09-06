@@ -7,16 +7,21 @@
 import React, { useState, useEffect } from 'react';
 import { BiBarChartAlt2, BiRefresh, BiBuilding, BiX, BiListUl, BiTable, BiSpreadsheet } from 'react-icons/bi';
 import { ToastProvider, useToast } from '@/components/Toast';
-import { formatDate } from '@/lib/formatDate';
+import { formatDate, bangkokYear } from '@/lib/datetime';
 import { formatRateWithYears } from '@/lib/depreciation';
 import { exportAssetReport } from '@/lib/assetReportExport';
 
 // 🌟 [asset_hierarchy] ทะเบียนบริษัทฝั่ง asset รองรับโครงสร้างแม่-ลูก 2 ชั้นแล้ว
 interface CompanyOption { id: number; companyName: string; companyCode: string; parentId?: number | null; }
+// 🌟 [report_filter] ตัวเลือกกรองเพิ่มเติม — ประเภททรัพย์สิน / ผังบัญชี (ของบริษัทที่เลือกอยู่)
+interface AccountTypeOption { id: number; code: string; name: string; }
+interface CategoryOption { id: number; name: string; codePrefix: string | null; accountTypeId: number | null; }
 
 interface DetailRow {
   assetCode: string;
   category: string;
+  accountCode: string | null;
+  accountName: string | null;
   description: string;
   location: string | null;
   companyName: string;
@@ -35,10 +40,20 @@ interface DetailRow {
   isExpired: boolean;
 }
 
+interface Totals { cost: number; accumDeprBF: number; depreciationCurrentPeriod: number; accumDeprCF: number; nbv: number }
+
 interface SummaryGroup {
   category: string;
   items: DetailRow[];
-  subtotal: { cost: number; accumDeprBF: number; depreciationCurrentPeriod: number; accumDeprCF: number; nbv: number };
+  subtotal: Totals;
+}
+
+// 🌟 [account_group] ชั้นบนของแท็บสรุป — จัดกลุ่มตามผังบัญชีก่อน แล้วค่อยแยกตามประเภททรัพย์สิน
+interface AccountGroup {
+  accountCode: string | null;
+  accountName: string | null;
+  categories: SummaryGroup[];
+  accountTotal: Totals;
 }
 
 interface ReportData {
@@ -46,6 +61,7 @@ interface ReportData {
   periodEndDate: string;
   periodStartDate: string;
   summary: SummaryGroup[];
+  summaryByAccount: AccountGroup[];
   detail: DetailRow[];
   grandTotal: { cost: number; accumDeprBF: number; depreciationCurrentPeriod: number; accumDeprCF: number; nbv: number };
 }
@@ -65,7 +81,12 @@ function AssetReport() {
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [companyId, setCompanyId] = useState('');
   const [includeSub, setIncludeSub] = useState(true);
-  const [year, setYear] = useState(new Date().getFullYear());
+  // 🌟 [report_filter] '' = ทั้งหมด
+  const [categoryId, setCategoryId] = useState('');
+  const [accountTypeId, setAccountTypeId] = useState('');
+  const [categories, setCategories] = useState<CategoryOption[]>([]);
+  const [accountTypes, setAccountTypes] = useState<AccountTypeOption[]>([]);
+  const [year, setYear] = useState(bangkokYear()); // 🌟 [timezone] ยึดเวลาไทย
   const [tab, setTab] = useState<'SUMMARY' | 'DETAIL'>('SUMMARY');
   const [report, setReport] = useState<ReportData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -80,11 +101,42 @@ function AssetReport() {
     });
   }, []);
 
+  // 🌟 [report_filter] ประเภททรัพย์สินและผังบัญชีแยกตามบริษัท จึงต้องโหลดใหม่ทุกครั้งที่สลับบริษัท
+  // และล้างตัวกรองเดิมทิ้ง เพราะ id ของบริษัทเก่าไม่มีอยู่ในบริษัทใหม่
+  // (ถ้าปล่อยค้างไว้ รายงานจะออกมา 0 รายการแบบไม่มีเหตุผลให้ผู้ใช้เข้าใจ)
+  useEffect(() => {
+    setCategoryId('');
+    setAccountTypeId('');
+    if (!companyId) { setCategories([]); setAccountTypes([]); return; }
+    Promise.all([
+      fetch(`/api/asset-categories?companyId=${companyId}`).then(r => r.ok ? r.json() : []),
+      fetch(`/api/asset-account-types?companyId=${companyId}`).then(r => r.ok ? r.json() : []),
+    ]).then(([cats, accs]) => { setCategories(cats); setAccountTypes(accs); })
+      .catch(() => { setCategories([]); setAccountTypes([]); });
+  }, [companyId]);
+
+  // เลือกผังบัญชีแล้ว ตัวเลือกประเภททรัพย์สินควรเหลือเฉพาะที่ผูกบัญชีนั้น
+  // ไม่งั้นผู้ใช้เลือกสองอย่างที่ขัดกันเองแล้วได้รายงานว่างโดยไม่รู้ว่าทำไม
+  const visibleCategories = accountTypeId
+    ? categories.filter(c => String(c.accountTypeId ?? '') === accountTypeId)
+    : categories;
+
+  // 🌟 [report_filter] ข้อความสรุปตัวกรองที่ใช้อยู่ ใช้ทั้งบนหน้าจอและในไฟล์ Excel
+  const filterNotes: string[] = [];
+  {
+    const acc = accountTypes.find(a => String(a.id) === accountTypeId);
+    const cat = categories.find(c => String(c.id) === categoryId);
+    if (acc) filterNotes.push(`ประเภทบัญชี: ${acc.code} ${acc.name}`);
+    if (cat) filterNotes.push(`ประเภททรัพย์สิน: ${cat.name}`);
+  }
+
   const runReport = async () => {
     if (!companyId) { showToast('กรุณาเลือกบริษัทก่อน', 'error'); return; }
     setIsLoading(true);
     try {
       const params = new URLSearchParams({ companyId, includeSubCompanies: String(includeSub), year: String(year) });
+      if (categoryId) params.set('categoryId', categoryId);
+      if (accountTypeId) params.set('accountTypeId', accountTypeId);
       const res = await fetch(`/api/assets/report?${params}`);
       if (res.ok) {
         setReport(await res.json());
@@ -113,7 +165,8 @@ function AssetReport() {
       return;
     }
     try {
-      const fileName = exportAssetReport(report, target, year);
+      // แนบตัวกรองที่ใช้อยู่ไปกับไฟล์ ไม่งั้นคนเปิดไฟล์ทีหลังจะนึกว่าเป็นยอดทั้งบริษัท
+      const fileName = exportAssetReport({ ...report, filterNotes }, target, year);
       showToast(`ส่งออกไฟล์ ${fileName} เรียบร้อยแล้ว`, 'success');
     } catch (error) {
       console.error('Export Excel Error:', error);
@@ -164,6 +217,31 @@ function AssetReport() {
           <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500">รอบปี (Fiscal Year)</label>
           <input type="number" value={year} onChange={e => setYear(Number(e.target.value))} className="w-32 rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-bold text-slate-700 outline-none focus:ring-blue-50 focus:border-blue-500" />
         </div>
+        {/* 🌟 [report_filter] กรองตามผังบัญชี — วางก่อนประเภททรัพย์สินเพราะเป็นตัวกรองที่กว้างกว่า */}
+        <div className="min-w-[200px] flex-1">
+          <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500">ประเภทบัญชี</label>
+          <select
+            value={accountTypeId}
+            onChange={e => { setAccountTypeId(e.target.value); setCategoryId(''); }}
+            className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-bold text-slate-700 outline-none focus:ring-blue-50 focus:border-blue-500"
+          >
+            <option value="">ทุกประเภทบัญชี</option>
+            {accountTypes.map(a => <option key={a.id} value={a.id}>{a.code} {a.name}</option>)}
+          </select>
+        </div>
+
+        <div className="min-w-[180px] flex-1">
+          <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-500">ประเภททรัพย์สิน</label>
+          <select
+            value={categoryId}
+            onChange={e => setCategoryId(e.target.value)}
+            className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-bold text-slate-700 outline-none focus:ring-blue-50 focus:border-blue-500"
+          >
+            <option value="">ทุกประเภททรัพย์สิน</option>
+            {visibleCategories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+
         {/* 🌟 [asset_hierarchy] รวมบริษัทลูก — นับเฉพาะบริษัทลูกที่ผู้ใช้มีสิทธิ์เข้าถึงเท่านั้น
             (backend กรองด้วย assetScope อีกชั้น การเป็นสมาชิกบริษัทแม่ไม่ได้เห็นลูกอัตโนมัติ) */}
         <label className="flex cursor-pointer items-center gap-2 pb-2.5 text-sm font-bold text-slate-600">
@@ -184,6 +262,17 @@ function AssetReport() {
               <p><span className="font-bold text-slate-500">วันสิ้นงวดบัญชี:</span> <span className="font-black text-slate-800">{formatDate(report.periodEndDate)}</span></p>
               <p><span className="font-bold text-slate-500">ช่วงงวด:</span> <span className="font-black text-slate-800">{formatDate(report.periodStartDate)} - {formatDate(report.periodEndDate)}</span></p>
             </div>
+
+            {/* 🌟 [report_filter] เตือนให้ชัดว่ายอดรวมเป็นยอดเฉพาะที่กรองแล้ว ไม่ใช่ยอดทั้งบริษัท */}
+            {filterNotes.length > 0 && (
+              <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-200 pt-3 text-xs">
+                <span className="font-bold text-amber-700">กรองอยู่:</span>
+                {filterNotes.map(n => (
+                  <span key={n} className="rounded-md bg-amber-50 px-2 py-0.5 font-semibold text-amber-800 ring-1 ring-amber-200">{n}</span>
+                ))}
+                <span className="text-slate-400">— ยอดรวมด้านล่างเป็นยอดเฉพาะที่กรองแล้ว</span>
+              </div>
+            )}
           </div>
 
           {/* Tabs = 2 sheet + ปุ่ม export ตามแท็บที่เปิดอยู่ */}
@@ -224,7 +313,9 @@ function AssetReport() {
 // หัวตาราง 2 ชั้น: แถวบนมีแถบ "Values" คร่อมคอลัมน์ตัวเลขทั้ง 5 (เลียนแบบ pivot table ของ Excel)
 // คอลัมน์แยกเป็น ประเภท / รหัส / รายละเอียด / อัตราค่าเสื่อม แล้วตามด้วยกลุ่มคอลัมน์ตัวเลข
 function SummarySheet({ report }: { report: ReportData }) {
-  const thBase = 'px-4 py-3 font-black uppercase tracking-wider text-[11px]';
+  // 🌟 [readability] หัวตารางใช้ text-sm เท่ากับเนื้อตารางและแถบหัวบัญชี
+  // เดิมเป็น text-[11px] ซึ่งเล็กกว่าเนื้อข้างล่างจนอ่านชื่อคอลัมน์ภาษาไทยยาวๆ ลำบาก
+  const thBase = 'px-4 py-3 font-black tracking-wide text-sm';
   const dimCols = 4; // จำนวนคอลัมน์ที่ไม่ใช่ตัวเลข (ประเภท/รหัส/รายละเอียด/อัตรา)
 
   return (
@@ -234,7 +325,7 @@ function SummarySheet({ report }: { report: ReportData }) {
           <tr>
             <th className="border-b border-slate-200" colSpan={dimCols} />
             <th
-              className="border-b border-l border-slate-300 bg-slate-200/70 px-4 py-2 text-center text-[11px] font-black uppercase tracking-widest text-slate-600"
+              className="border-b border-l border-slate-300 bg-slate-200/70 px-4 py-2 text-center text-sm font-black uppercase tracking-widest text-slate-600"
               colSpan={5}
             >
               Values
@@ -253,22 +344,34 @@ function SummarySheet({ report }: { report: ReportData }) {
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
-          {report.summary.map((g) => (
+          {report.summaryByAccount.map((acc) => (
+            <React.Fragment key={acc.accountCode ?? 'NO_ACCOUNT'}>
+              {/* 🌟 [account_group] แถบหัวกลุ่มบัญชี — คร่อมทั้งแถวให้เห็นชัดว่าข้างล่างอยู่ใต้บัญชีไหน */}
+              <tr className="bg-indigo-50/80">
+                <td colSpan={dimCols + 5} className="px-4 py-3 text-base font-black text-indigo-900">
+                  ประเภทบัญชี:{' '}
+                  {acc.accountCode
+                    ? <>{acc.accountName} <span className="font-mono font-bold">({acc.accountCode})</span></>
+                    : <span className="text-slate-500">ไม่ระบุบัญชี</span>}
+                </td>
+              </tr>
+
+              {acc.categories.map((g) => (
             <React.Fragment key={g.category}>
               {g.items.map((row, i) => (
                 <tr key={row.assetCode} className="hover:bg-blue-50/50 transition text-slate-600">
                   {/* แสดงชื่อประเภทเฉพาะแถวแรกของกลุ่ม เหมือน pivot ที่ไม่พิมพ์ค่าซ้ำ */}
-                  <td className="px-4 py-2 font-semibold text-slate-700">
+                  <td className="px-4 py-2.5 font-semibold text-slate-700">
                     {i === 0 ? g.category : ''}
                   </td>
-                  <td className="px-4 py-2 font-mono">{row.assetCode}</td>
-                  <td className="px-4 py-2">{row.description}</td>
-                  <td className="px-4 py-2 text-right font-mono">{formatRateWithYears(row.depreciationRate, row.totalUsefulLifeDays)}</td>
-                  <td className="px-4 py-2 border-l border-slate-200 text-right font-mono">{fmt(row.cost)}</td>
-                  <td className="px-4 py-2 text-right font-mono">{fmt(row.accumDeprBF)}</td>
-                  <td className="px-4 py-2 text-right font-mono">{fmt(row.depreciationCurrentPeriod)}</td>
-                  <td className="px-4 py-2 text-right font-mono">{fmt(row.accumDeprCF)}</td>
-                  <td className="px-4 py-2 text-right font-mono">{fmt(row.nbv)}</td>
+                  <td className="px-4 py-2.5 font-mono">{row.assetCode}</td>
+                  <td className="px-4 py-2.5">{row.description}</td>
+                  <td className="px-4 py-2.5 text-right font-mono">{formatRateWithYears(row.depreciationRate, row.totalUsefulLifeDays)}</td>
+                  <td className="px-4 py-2.5 border-l border-slate-200 text-right font-mono">{fmt(row.cost)}</td>
+                  <td className="px-4 py-2.5 text-right font-mono">{fmt(row.accumDeprBF)}</td>
+                  <td className="px-4 py-2.5 text-right font-mono">{fmt(row.depreciationCurrentPeriod)}</td>
+                  <td className="px-4 py-2.5 text-right font-mono">{fmt(row.accumDeprCF)}</td>
+                  <td className="px-4 py-2.5 text-right font-mono">{fmt(row.nbv)}</td>
                 </tr>
               ))}
               <tr className="bg-amber-50 font-black text-slate-800">
@@ -278,6 +381,20 @@ function SummarySheet({ report }: { report: ReportData }) {
                 <td className="px-4 py-2.5 text-right font-mono">{fmt(g.subtotal.depreciationCurrentPeriod)}</td>
                 <td className="px-4 py-2.5 text-right font-mono">{fmt(g.subtotal.accumDeprCF)}</td>
                 <td className="px-4 py-2.5 text-right font-mono">{fmt(g.subtotal.nbv)}</td>
+              </tr>
+            </React.Fragment>
+              ))}
+
+              {/* 🌟 [account_group] ยอดรวมระดับบัญชี — ตัวเลขที่เอาไปกระทบกับงบจริง */}
+              <tr className="bg-indigo-100 font-black text-indigo-900">
+                <td className="px-4 py-2.5" colSpan={dimCols}>
+                  รวมบัญชี {acc.accountCode ? `${acc.accountName} (${acc.accountCode})` : 'ไม่ระบุบัญชี'}
+                </td>
+                <td className="px-4 py-2.5 border-l border-indigo-200 text-right font-mono">{fmt(acc.accountTotal.cost)}</td>
+                <td className="px-4 py-2.5 text-right font-mono">{fmt(acc.accountTotal.accumDeprBF)}</td>
+                <td className="px-4 py-2.5 text-right font-mono">{fmt(acc.accountTotal.depreciationCurrentPeriod)}</td>
+                <td className="px-4 py-2.5 text-right font-mono">{fmt(acc.accountTotal.accumDeprCF)}</td>
+                <td className="px-4 py-2.5 text-right font-mono">{fmt(acc.accountTotal.nbv)}</td>
               </tr>
             </React.Fragment>
           ))}
@@ -310,7 +427,8 @@ function DetailSheet({ report, onSelectRow }: { report: ReportData; onSelectRow:
     return <div className="p-10 text-center text-slate-400 font-semibold">ไม่พบทรัพย์สินในเงื่อนไขที่เลือก</div>;
   }
 
-  const thBase = 'px-3 py-3 font-black uppercase tracking-wider text-[11px] align-bottom';
+  // 🌟 [readability] ขยายเท่าแท็บสรุป ให้สลับแท็บแล้วขนาดตัวอักษรไม่กระโดด
+  const thBase = 'px-3 py-3 font-black tracking-wide text-sm align-bottom';
   const tdBase = 'px-3 py-3';
 
   const totalItems = report.detail.length;
@@ -328,6 +446,8 @@ function DetailSheet({ report, onSelectRow }: { report: ReportData; onSelectRow:
           <tr>
             <th className={`${thBase} sticky left-0 z-40 bg-slate-100`}>รหัสทรัพย์สิน</th>
             <th className={thBase}>ประเภททรัพย์สิน</th>
+            <th className={thBase}>รหัสบัญชี</th>
+            <th className={thBase}>ชื่อบัญชี</th>
             <th className={thBase}>รายละเอียดทรัพย์สิน</th>
             <th className={`${thBase} text-right`}>อัตราค่าเสื่อม<br />ราคาต่อปี</th>
             <th className={`${thBase} text-center`}>วันที่ซื้อ</th>
@@ -356,6 +476,9 @@ function DetailSheet({ report, onSelectRow }: { report: ReportData; onSelectRow:
                 </div>
               </td>
               <td className={`${tdBase} text-slate-600`}>{row.category}</td>
+              {/* 🌟 [account_col] รหัสบัญชีใช้ font-mono ให้หลักตรงกัน อ่านผังบัญชีง่าย */}
+              <td className={`${tdBase} font-mono text-slate-600`}>{row.accountCode ?? <span className="text-slate-300">-</span>}</td>
+              <td className={`${tdBase} text-slate-600`}>{row.accountName ?? <span className="text-slate-300">-</span>}</td>
               <td className={`${tdBase} font-semibold`}>
                 {row.description}
                 {row.location && <span className="ml-1 text-xs font-normal text-slate-400">({row.location})</span>}
@@ -381,7 +504,8 @@ function DetailSheet({ report, onSelectRow }: { report: ReportData; onSelectRow:
               ใช้ยอดเดียวกับ Grand Total ของ sheet สรุป จะได้ตรวจทานข้ามกันได้ */}
           <tr className="bg-slate-800 font-black text-white">
             <td className={`${tdBase} sticky left-0 z-10 bg-slate-800`}>รวมทั้งหมด</td>
-            <td className={tdBase} colSpan={8}>{report.detail.length.toLocaleString()} รายการ</td>
+            {/* colSpan ต้องขยับตามจำนวนคอลัมน์ที่แทรกเพิ่ม ไม่งั้นตารางเบี้ยวทั้งแถว */}
+            <td className={tdBase} colSpan={10}>{report.detail.length.toLocaleString()} รายการ</td>
             <td className={`${tdBase} text-right font-mono`}>{fmt(report.grandTotal.cost)}</td>
             <td className={`${tdBase} text-right font-mono`}>{fmt(report.grandTotal.accumDeprBF)}</td>
             <td className={`${tdBase} text-right font-mono`}>{fmt(report.grandTotal.depreciationCurrentPeriod)}</td>
@@ -430,6 +554,7 @@ function RowDetailModal({ row, onClose }: { row: DetailRow; onClose: () => void 
   const fields: [string, string][] = [
     ['รหัสทรัพย์สิน', row.assetCode],
     ['ประเภททรัพย์สิน', row.category],
+    ['ประเภทบัญชี', row.accountCode ? `${row.accountCode} ${row.accountName ?? ''}`.trim() : '-'],
     ['รายละเอียดทรัพย์สิน', row.description],
     ['ที่ตั้งทรัพย์สิน', row.location || '-'],
     ['บริษัท', row.companyName],

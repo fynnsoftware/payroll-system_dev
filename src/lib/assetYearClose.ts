@@ -4,6 +4,7 @@
 // (ก่อนปีปัจจุบัน) แต่ยังไม่เคยปิดหรือไม่ ถ้ามีให้คำนวณและบันทึกเป็นประวัติถาวรทันที (closedBy = "SYSTEM (Auto)")
 import { PrismaClient } from "@prisma/client";
 import { calcAssetDepreciation, getFiscalPeriod, AssetForCalc, CalcRule, CalcOptions } from "./depreciation";
+import { bangkokYear } from "./datetime";
 
 export async function ensureAssetYearsClosed(
   prisma: PrismaClient,
@@ -13,7 +14,8 @@ export async function ensureAssetYearsClosed(
   // 🌟 [residual_option] ต้องส่งมาให้ตรงกับที่ใช้ตอนแสดงผล ไม่งั้นยอดปิดงวดจะคนละชุดกับรายงาน
   options?: CalcOptions,
 ): Promise<void> {
-  const currentYear = new Date().getUTCFullYear();
+  // 🌟 [timezone] ปีปัจจุบันตามเวลาไทย — ถ้าใช้ UTC ช่วงเช้า 1 ม.ค. จะยังปิดงวดเป็นปีที่แล้ว
+  const currentYear = bangkokYear();
   const uptoYear = currentYear - 1; // ปิดได้แค่ปีที่ "ผ่านไปแล้วเต็มปี" เท่านั้น ปีปัจจุบันยังเปิดอยู่เสมอ
 
   const purchaseYear = asset.purchaseDate.getUTCFullYear();

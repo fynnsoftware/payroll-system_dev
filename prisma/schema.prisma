@@ -69,6 +69,11 @@ model Company {
 
   // 🌟 [asset_redesign] สมาชิกฝั่ง asset — ใครเข้าถึงทรัพย์สินของบริษัทนี้ได้บ้าง
   assetMembers  AssetCompanyMember[]
+
+  // 🌟 [per_company] master data ฝั่ง asset ที่แยกขาดตามบริษัท
+  assetCategories    AssetCategory[]
+  assetAccountTypes  AssetAccountType[]
+  assetSettings      AssetCompanySettings?
 }
 
 // 🌟 [asset_redesign] ใครเข้าถึงบริษัทไหนได้บ้างในโมดูล Asset
@@ -100,11 +105,68 @@ model AssetCompanyMember {
 // 4. FIXED ASSET REGISTER (Phase 2)
 // ==========================================
 
-// 🌟 ประเภททรัพย์สิน — master data แก้ไขได้ผ่านหน้า Settings (ตอบคำถาม phase2asset_#27 แล้ว: "แก้ไขได้")
+// 🌟 [per_company] ประเภททรัพย์สิน — master data แก้ไขได้ผ่านหน้า Settings แยกขาดตามบริษัท
+//
+// ⚠️ เดิมเป็น master data กลางทั้งระบบ (name @unique) ซึ่งมีปัญหาจริง 3 ข้อ:
+//   1. บริษัท A ลบประเภทไม่ได้ถ้าบริษัท B มีทรัพย์สินผูกอยู่ แต่ error บอกแค่
+//      "มีทรัพย์สินใช้ประเภทนี้อยู่" ผู้ใช้บริษัท A เปิดดูแล้วไม่เห็นสักชิ้น จึงงง
+//   2. ถ้าไม่มีใครใช้เลย บริษัท A ลบทิ้งได้จริง แล้วหายจาก dropdown ของบริษัท B เงียบๆ
+//   3. อันตรายที่สุดคือปุ่มแก้ไข — รายงานดึงชื่อประเภทสดจากตารางนี้ ไม่ได้เก็บ snapshot
+//      บริษัท A เปลี่ยนชื่อ รายงานย้อนหลังทุกปีของบริษัท B เปลี่ยนตามทันที
+//
+// companyId เป็น optional เพื่อให้ migration ผ่านบนข้อมูลเดิมที่ยังไม่มีเจ้าของ
+// แต่ API บังคับให้ต้องมีเสมอตอนสร้าง/แก้ไข และมองไม่เห็นแถวที่ companyId เป็น null
 model AssetCategory {
-  id     Int     @id @default(autoincrement())
-  name   String  @unique // เครื่องใช้สำนักงาน, เครื่องจักรและอุปกรณ์, ยานพาหนะ, อาคาร
-  assets Asset[]
+  id        Int      @id @default(autoincrement())
+  name      String   // เครื่องใช้สำนักงาน, เครื่องจักรและอุปกรณ์, ยานพาหนะ, อาคาร
+
+  // 🌟 [asset_code] ตัวนำหน้ารหัสทรัพย์สินของประเภทนี้ เช่น "C" -> C001, C002
+  // ใช้เป็นค่าตั้งต้นให้ช่องรหัสในหน้าสร้างทรัพย์สิน (ผู้ใช้ยังพิมพ์ทับเองได้)
+  // เว้นว่างได้ = ประเภทนี้ไม่ช่วยเติมรหัสให้ ต้องพิมพ์เองทั้งหมด
+  codePrefix String?
+
+  // 🌟 [account_link] ผังบัญชีที่ประเภททรัพย์สินนี้ลงบัญชีอยู่
+  // ⚠️ Restrict ไม่ใช่ SetNull — ถ้าปล่อยให้ลบผังบัญชีแล้วความเชื่อมโยงหลุดเงียบๆ
+  // ประเภททรัพย์สินจะกลายเป็นไม่มีบัญชีรองรับโดยไม่มีใครรู้ตัว
+  accountTypeId Int?
+  accountType   AssetAccountType? @relation(fields: [accountTypeId], references: [id], onDelete: Restrict)
+
+  companyId Int?
+  company   Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  assets    Asset[]
+
+  // ชื่อซ้ำข้ามบริษัทได้ (ทุกบริษัทมี "ยานพาหนะ" ของตัวเอง) แต่ห้ามซ้ำภายในบริษัทเดียวกัน
+  @@unique([companyId, name])
+  // prefix ก็ห้ามซ้ำในบริษัทเดียวกัน ไม่งั้นเลขรันของสองประเภทจะสลับกันจนอ่านรหัสแล้วเดาประเภทไม่ได้
+  @@unique([companyId, codePrefix])
+}
+
+// 🌟 [per_company] ประเภทบัญชี (ผังบัญชี) — รหัสบัญชี + ชื่อบัญชี แยกตามบริษัท
+// ค่าเริ่มต้น: 10000000 สินทรัพย์ / 11000000 สินทรัพย์หมุนเวียน
+model AssetAccountType {
+  id        Int      @id @default(autoincrement())
+  code      String   // รหัสบัญชี เช่น 10000000
+  name      String   // ชื่อบัญชี เช่น สินทรัพย์
+  companyId Int?
+  company   Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  // ประเภททรัพย์สินที่ลงบัญชีนี้
+  categories AssetCategory[]
+
+  createdAt DateTime @default(now())
+
+  @@unique([companyId, code])
+}
+
+// 🌟 [per_company] ตั้งค่าฝั่ง asset ที่แยกตามบริษัท
+// (ส่วนวิธีคำนวณคงมูลค่า 1 บาท ยังอยู่ที่ AssetModuleSettings เพราะเป็นนโยบายบัญชี
+//  ที่ควรเหมือนกันทั้งระบบ และเปลี่ยนทีล้างยอดปิดงวดทั้งหมด)
+model AssetCompanySettings {
+  id                    Int     @id @default(autoincrement())
+  companyId             Int     @unique
+  company               Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  nearExpiryWarningDays Int     @default(0) // 0 = ปิดการแจ้งเตือนใกล้หมดอายุ
 }
 
 // 🌟 ประเภทการคำนวณค่าเสื่อมราคา — master data ที่แก้ได้ทั้งชื่อและ "การคำนวณ" จริง
@@ -181,10 +243,11 @@ model AssetYearlyClose {
   @@unique([assetId, year])
 }
 
-// 🌟 [phase2asset_#16] ตั้งค่าการแจ้งเตือนของโมดูล Asset — singleton row เดียว
+// 🌟 ตั้งค่าระดับระบบของโมดูล Asset — singleton row เดียว
+// ⚠️ [per_company] nearExpiryWarningDays ย้ายไป AssetCompanySettings แล้ว (แยกตามบริษัท)
+// เหลือไว้ที่นี่เฉพาะนโยบายบัญชีที่ต้องเหมือนกันทั้งระบบ เพราะเปลี่ยนทีล้างยอดปิดงวดทั้งหมด
 model AssetModuleSettings {
   id                    Int @id @default(1)
-  nearExpiryWarningDays Int @default(0) // 0 = ปิดการแจ้งเตือนใกล้หมดอายุ (ค่าเริ่มต้นตามที่ user ตอบ)
 
   // 🌟 [residual_option] วิธีปิดยอดค่าเสื่อมสะสม
   //   true  (ค่าเริ่มต้น) = คงมูลค่า 1 บาทตามธรรมเนียมบัญชีไทย — ค่าเสื่อมสะสมไม่เกิน (ราคาทุน - 1)
