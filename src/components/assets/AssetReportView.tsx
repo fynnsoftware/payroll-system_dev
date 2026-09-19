@@ -5,7 +5,7 @@
 // ⚠️ component กลาง ใช้ร่วมกันทั้งฝั่ง /admin/assets-report (ธีม Admin) และ /asset/report (ธีม Employee)
 // แก้ที่นี่ที่เดียวมีผลทั้งสองฝั่ง — อย่า copy ไปวางซ้ำ
 import React, { useState, useEffect } from 'react';
-import { BiBarChartAlt2, BiRefresh, BiBuilding, BiX, BiListUl, BiTable, BiSpreadsheet } from 'react-icons/bi';
+import { BiBarChartAlt2, BiRefresh, BiBuilding, BiX, BiListUl, BiTable, BiSpreadsheet, BiSearch } from 'react-icons/bi';
 import { ToastProvider, useToast } from '@/components/Toast';
 import { formatDate, bangkokYear } from '@/lib/datetime';
 import { formatRateWithYears } from '@/lib/depreciation';
@@ -299,7 +299,7 @@ function AssetReport() {
           </div>
 
           <div className="bg-white rounded-2xl shadow-md border border-slate-200 overflow-hidden">
-            {tab === 'SUMMARY' ? <SummarySheet report={report} /> : <DetailSheet report={report} onSelectRow={setSelectedRow} />}
+            {tab === 'SUMMARY' ? <SummarySheet report={report} onSelectRow={setSelectedRow} /> : <DetailSheet report={report} onSelectRow={setSelectedRow} />}
           </div>
         </>
       )}
@@ -312,7 +312,7 @@ function AssetReport() {
 // 🌟 [asset_report] ตาราง "สรุปทะเบียนทรัพย์สิน" รูปแบบ pivot ตาม template
 // หัวตาราง 2 ชั้น: แถวบนมีแถบ "Values" คร่อมคอลัมน์ตัวเลขทั้ง 5 (เลียนแบบ pivot table ของ Excel)
 // คอลัมน์แยกเป็น ประเภท / รหัส / รายละเอียด / อัตราค่าเสื่อม แล้วตามด้วยกลุ่มคอลัมน์ตัวเลข
-function SummarySheet({ report }: { report: ReportData }) {
+function SummarySheet({ report, onSelectRow }: { report: ReportData; onSelectRow: (row: DetailRow) => void }) {
   // 🌟 [readability] หัวตารางใช้ text-sm เท่ากับเนื้อตารางและแถบหัวบัญชี
   // เดิมเป็น text-[11px] ซึ่งเล็กกว่าเนื้อข้างล่างจนอ่านชื่อคอลัมน์ภาษาไทยยาวๆ ลำบาก
   const thBase = 'px-4 py-3 font-black tracking-wide text-sm';
@@ -358,13 +358,27 @@ function SummarySheet({ report }: { report: ReportData }) {
 
               {acc.categories.map((g) => (
             <React.Fragment key={g.category}>
+              {/* 🌟 [row_detail] คลิกแถวเพื่อดูรายละเอียดรายตัว เหมือนแท็บ "ข้อมูลทะเบียนทรัพย์สิน"
+                  ใช้ popup ตัวเดียวกัน (RowDetailModal) ข้อมูลจึงตรงกันแน่นอนทั้งสองแท็บ
+                  ⚠️ เฉพาะแถวทรัพย์สินเท่านั้น แถวรวมประเภท/รวมบัญชี/Grand Total คลิกไม่ได้
+                  ⚠️ คอมเมนต์ JSX ต้องอยู่นอก map() — วางไว้ในตัว map โดยตรง JSX จะตีเป็น object แล้ว parse พัง */}
               {g.items.map((row, i) => (
-                <tr key={row.assetCode} className="hover:bg-blue-50/50 transition text-slate-600">
+                <tr
+                  key={row.assetCode}
+                  onClick={() => onSelectRow(row)}
+                  title="คลิกเพื่อดูรายละเอียด"
+                  className="group cursor-pointer text-slate-600 transition hover:bg-blue-50/50"
+                >
                   {/* แสดงชื่อประเภทเฉพาะแถวแรกของกลุ่ม เหมือน pivot ที่ไม่พิมพ์ค่าซ้ำ */}
                   <td className="px-4 py-2.5 font-semibold text-slate-700">
                     {i === 0 ? g.category : ''}
                   </td>
-                  <td className="px-4 py-2.5 font-mono">{row.assetCode}</td>
+                  <td className="px-4 py-2.5 font-mono">
+                    <span className="inline-flex items-center gap-1.5">
+                      {row.assetCode}
+                      <BiSearch className="text-sm text-slate-300 opacity-0 transition group-hover:opacity-100" />
+                    </span>
+                  </td>
                   <td className="px-4 py-2.5">{row.description}</td>
                   <td className="px-4 py-2.5 text-right font-mono">{formatRateWithYears(row.depreciationRate, row.totalUsefulLifeDays)}</td>
                   <td className="px-4 py-2.5 border-l border-slate-200 text-right font-mono">{fmt(row.cost)}</td>

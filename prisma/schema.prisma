@@ -192,10 +192,22 @@ model DepreciationCalcType {
 
 model Asset {
   id                 String        @id @default(cuid())
-  assetCode          String        @unique // รหัสทรัพย์สิน เช่น A001
+  assetCode          String        // รหัสทรัพย์สิน เช่น A001 — ห้ามซ้ำ "ภายในเครือบริษัท" (ดู groupRootId ด้านล่าง)
 
   companyId          Int
   company            Company       @relation(fields: [companyId], references: [id])
+
+  // 🌟 [group_dup] บริษัทต้นเครือของทรัพย์สินชิ้นนี้ = company.parentId ?? company.id
+  //
+  // ⚠️ ทำไมต้องมีคอลัมน์นี้ ทั้งที่คำนวณจาก companyId ได้:
+  // กติกาคือ "รหัสห้ามซ้ำภายในเครือ แต่ข้ามเครือซ้ำได้" ซึ่ง Postgres เขียนเป็น constraint ตรงๆ ไม่ได้
+  // เพราะ unique index อ้างข้ามตาราง (ไปดู Company.parentId) ไม่ได้
+  // ถ้าไปเช็คในโค้ดแทน จะมีช่องว่าง race condition — สองคนกดบันทึกพร้อมกัน ต่างฝ่ายต่างเช็คแล้วว่าง
+  // จึงต้อง "ตรึง" ต้นเครือไว้เป็นคอลัมน์จริง แล้วให้ฐานข้อมูลบังคับ unique ให้
+  //
+  // ⚠️ เป็นค่า derived — ต้อง resync ทุกครั้งที่ย้ายทรัพย์สินข้ามบริษัท หรือแก้บริษัทแม่
+  // (ดู src/lib/companyGroup.ts — ห้ามเขียนค่านี้เองตรงๆ ให้เรียกตัวช่วยเท่านั้น)
+  groupRootId        Int
 
   categoryId         Int
   category           AssetCategory @relation(fields: [categoryId], references: [id])
@@ -221,6 +233,10 @@ model Asset {
 
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
+
+  // 🌟 [group_dup] รหัสซ้ำได้ถ้าคนละเครือ แต่ห้ามซ้ำภายในเครือเดียวกัน
+  @@unique([groupRootId, assetCode])
+  @@index([groupRootId])
 }
 
 // 🌟 [phase2asset_#15] ประวัติการปิดงวดค่าเสื่อมราคารายปี — ปิดอัตโนมัติเมื่อมีคนเข้าหน้า Asset

@@ -9,6 +9,7 @@ import { calcAssetDepreciation, getFiscalPeriod, computeAccumDeprCFThroughYear, 
 import { ensureAssetYearsClosed, getFrozenBFForYear } from "@/lib/assetYearClose";
 import { getAssetCompanyIds, isAssetCompanyAllowed, explainAssetAccessDenied } from "@/lib/assetScope";
 import { parseAssetCode, generateAssetCodes } from "@/lib/assetCode";
+import { getGroupRootId, findGroupAssetsByCodePrefix } from "@/lib/companyGroup";
 import { validateOpeningBalance, resolveOpeningBalance } from "@/lib/assetValidation";
 import { getCalcOptions } from "@/lib/assetModuleSettings";
 import { bangkokYear } from "@/lib/datetime";
@@ -185,13 +186,14 @@ export async function POST(request: NextRequest) {
     }
 
     // 🌟 [asset_duplicate] สร้างรหัสรันต่อเนื่อง โดยข้ามรหัสที่ถูกใช้ไปแล้ว
-    // ดึงรหัสเดิมที่ขึ้นต้นด้วย prefix เดียวกันมาก่อน (query แคบ ไม่ใช่ทั้งตาราง)
+    // 🌟 [group_dup] รหัสห้ามซ้ำแค่ "ภายในเครือ" — ข้ามเครือซ้ำได้ ถือว่าคนละทะเบียน
+    // จึงดูรหัสที่ถูกใช้ไปแล้วเฉพาะในเครือของบริษัทปลายทางเท่านั้น
+    // (เดิมค้นทั้งตาราง ทำให้รหัสของบริษัทที่ไม่เกี่ยวกันเลยมาเบียดเลขรันของเราโดยไม่จำเป็น)
+    const groupRootId = await getGroupRootId(Number(companyId));
     const parsed = parseAssetCode(String(assetCode));
-    const existing = await prisma.asset.findMany({
-      where: { assetCode: { startsWith: parsed.prefix } },
-      select: { assetCode: true },
-    });
-    const takenCodes = new Set(existing.map((a) => a.assetCode));
+    const takenCodes = new Set(
+      await findGroupAssetsByCodePrefix(groupRootId, parsed.prefix),
+    );
 
     const codes = generateAssetCodes(String(assetCode), qty, takenCodes);
     if (codes.length < qty) {
@@ -203,6 +205,8 @@ export async function POST(request: NextRequest) {
 
     const sharedData = {
       companyId: Number(companyId),
+      // 🌟 [group_dup] ตรึงต้นเครือไว้ตอนสร้าง เพื่อให้ DB บังคับ unique ระดับเครือได้
+      groupRootId,
       categoryId: Number(categoryId),
       description,
       location: location || null,
@@ -219,20 +223,36 @@ export async function POST(request: NextRequest) {
       codes.map((code) => prisma.asset.create({ data: { ...sharedData, assetCode: code } })),
     );
 
+    // 🌟 [dup_warn] ถ้ารหัสที่ได้จริงไม่ตรงกับที่ผู้ใช้กรอก ต้องบอกให้ชัดในข้อความตอบกลับ
+    //
+    // ⚠️ generateAssetCodes ข้ามรหัสที่ถูกใช้ไปแล้วให้เงียบๆ เดิมจึงขึ้นแค่ "บันทึกสำเร็จ"
+    // ผู้ใช้เลยเชื่อว่าได้รหัสตามที่พิมพ์ แล้วเอาไปทำป้ายทรัพย์สิน/ลงเอกสารผิดตัว
+    // (หน้าจอเตือนล่วงหน้าอยู่แล้ว แต่ยังมีช่องว่างกรณีคนอื่นสร้างแทรกระหว่างที่กรอกฟอร์มค้างไว้)
+    const requestedCode = String(assetCode).trim();
+    const codeChanged = codes[0] !== requestedCode;
+
     return NextResponse.json(
       {
         message:
           qty === 1
-            ? "บันทึกทรัพย์สินสำเร็จ"
-            : `สร้างทรัพย์สิน ${qty} รายการสำเร็จ (${codes[0]} - ${codes[codes.length - 1]})`,
+            ? codeChanged
+              ? `บันทึกสำเร็จ — รหัส "${requestedCode}" ถูกใช้ไปแล้ว ระบบบันทึกเป็น "${codes[0]}" แทน`
+              : "บันทึกทรัพย์สินสำเร็จ"
+            : `สร้างทรัพย์สิน ${qty} รายการสำเร็จ (${codes[0]} - ${codes[codes.length - 1]})` +
+              (codeChanged ? ` — รหัสเริ่มต้นเลื่อนจาก "${requestedCode}" เพราะถูกใช้ไปแล้ว` : ""),
         codes,
+        codeChanged,
+        requestedCode,
         count: codes.length,
       },
       { status: 201 },
     );
   } catch (error: any) {
     if (error.code === "P2002") {
-      return NextResponse.json({ error: "รหัสทรัพย์สินนี้มีอยู่ในระบบแล้ว" }, { status: 400 });
+      return NextResponse.json(
+        { error: "รหัสทรัพย์สินนี้ถูกใช้ไปแล้วในเครือบริษัทนี้" },
+        { status: 400 },
+      );
     }
     console.error("POST Asset Error:", error);
     return NextResponse.json({ error: "บันทึกทรัพย์สินไม่สำเร็จ" }, { status: 500 });

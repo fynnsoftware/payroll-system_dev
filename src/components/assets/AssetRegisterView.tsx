@@ -9,7 +9,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   BiPackage, BiPlus, BiX, BiRefresh, BiCog, BiTrash, BiSearch,
-  BiPowerOff, BiCheckShield, BiMap, BiFilter, BiCopy, BiInfoCircle, BiErrorCircle,
+  BiPowerOff, BiCheckShield, BiMap, BiFilter, BiCopy, BiInfoCircle, BiErrorCircle, BiLockAlt,
 } from 'react-icons/bi';
 import { ToastProvider, useToast } from '@/components/Toast';
 import { formatDate, bangkokYear } from '@/lib/datetime';
@@ -40,6 +40,18 @@ interface Asset {
   openingAsOfDate?: string | null;
   isExpired?: boolean;
   currentNbv?: number;
+}
+
+// 🌟 [dup_warn] ผลตรวจรหัสซ้ำที่ได้จาก GET /api/assets/check-code
+//   scope บอกว่าความซ้ำอยู่ตรงไหน ใช้เลือกสีและข้อความของคำเตือน
+//   🌟 [group_dup] ขอบเขตความซ้ำคือ "เครือบริษัท" — นอกเครือใช้รหัสเดียวกันได้ ไม่ถือว่าซ้ำ
+//   conflict เป็น null ได้แม้ taken = true — กรณีบริษัทในเครือที่ผู้ใช้ไม่ได้เป็นสมาชิก
+//   suggestedCodes คือรหัสจริงที่ server จะบันทึกให้ถ้ายังกดบันทึกต่อ
+interface CodeCheck {
+  taken: boolean;
+  scope: 'SAME_COMPANY' | 'GROUP' | null;
+  conflict: { assetCode: string; description: string; companyName: string | null } | null;
+  suggestedCodes: string[];
 }
 
 // 🌟 อายุการใช้งานมาตรฐาน -> อัตราค่าเสื่อมต่อปี (เส้นตรง) = 100 / จำนวนปี
@@ -125,6 +137,10 @@ function AssetRegister() {
   const [rateMode, setRateMode] = useState('');
   // 🌟 [asset_duplicate] จำนวนรายการที่จะสร้างพร้อมกัน (ใช้เฉพาะโหมด CREATE)
   const [quantity, setQuantity] = useState('1');
+
+  // 🌟 [dup_warn] ผลตรวจรหัสซ้ำจาก server (ถามสดระหว่างพิมพ์)
+  const [codeCheck, setCodeCheck] = useState<CodeCheck | null>(null);
+  const [isCheckingCode, setIsCheckingCode] = useState(false);
 
   const handleRateModeChange = (mode: string) => {
     setRateMode(mode);
@@ -261,6 +277,7 @@ function AssetRegister() {
       setRateMode('');
     }
     setQuantity('1'); // รีเซ็ตจำนวนทุกครั้งที่เปิดฟอร์ม กันเผลอสร้างซ้ำจากค่าค้าง
+    setCodeCheck(null); // 🌟 [dup_warn] ล้างผลตรวจของรอบก่อน ไม่งั้นคำเตือนเก่าจะค้างให้รหัสใหม่
     setIsModalOpen(true);
   };
 
@@ -286,6 +303,7 @@ function AssetRegister() {
     const matched = DEPRECIATION_PRESETS.find(p => Math.abs(p.percent - pct) < 0.005);
     setRateMode(matched ? String(matched.years) : 'CUSTOM');
     setQuantity('1');
+    setCodeCheck(null); // 🌟 [dup_warn] ล้างผลตรวจของรอบก่อน
     setIsModalOpen(true);
   };
 
@@ -358,17 +376,49 @@ function AssetRegister() {
     formData.hasOpening, formData.openingAccumDepr, formData.openingAsOfDate, calcRules,
   ]);
 
-  // 🌟 [asset_duplicate] ตัวอย่างรหัสที่จะถูกสร้าง (คำนวณฝั่ง client เพื่อดูก่อนกดบันทึก)
-  // ⚠️ เป็นแค่ preview — ตัวจริงที่ใช้บันทึกคำนวณใหม่ที่ฝั่ง server พร้อมข้ามรหัสที่ถูกใช้ไปแล้ว
-  // จึงอาจไม่ตรงกับที่แสดงตรงนี้ถ้ามีรหัสซ้ำอยู่ในระบบ
+  // 🌟 [dup_warn] ถาม server สดๆ ว่ารหัสที่พิมพ์อยู่ซ้ำกับของเดิมไหม
+  //
+  // ⚠️ ทำไมต้องถาม server ไม่เช็คจากรายการในหน้า:
+  // หน้านี้โหลดมาแค่ชุดที่ผ่านตัวกรองและแบ่งหน้าแล้ว รหัสที่ซ้ำส่วนใหญ่อยู่ในกองที่ไม่ได้โหลดมา
+  // และ assetCode เป็น unique ทั้งระบบ จึงชนกับบริษัทที่ผู้ใช้มองไม่เห็นได้ด้วย
+  //
+  // ⚠️ หน่วง 400ms เพื่อไม่ให้ยิง request ทุกตัวอักษรที่พิมพ์
+  useEffect(() => {
+    // EDIT/PREVIEW ไม่ต้องเช็ค — รหัสถูกล็อกไม่ให้แก้อยู่แล้ว
+    if (!isModalOpen || modalMode !== 'CREATE') { setCodeCheck(null); return; }
+    const code = formData.assetCode.trim();
+    if (!code || !formData.companyId) { setCodeCheck(null); return; }
+
+    let cancelled = false;
+    setIsCheckingCode(true);
+    const timer = setTimeout(() => {
+      const qty = Math.max(1, Math.min(50, Number(quantity) || 1));
+      const params = new URLSearchParams({
+        code, companyId: formData.companyId, qty: String(qty),
+      });
+      fetch(`/api/assets/check-code?${params.toString()}`)
+        .then(res => res.ok ? res.json() : null)
+        .then(data => { if (!cancelled) setCodeCheck(data ?? null); })
+        .catch(() => { if (!cancelled) setCodeCheck(null); })
+        .finally(() => { if (!cancelled) setIsCheckingCode(false); });
+    }, 400);
+
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [isModalOpen, modalMode, formData.assetCode, formData.companyId, quantity]);
+
+  // 🌟 [asset_duplicate] ตัวอย่างรหัสที่จะถูกสร้างเมื่อสร้างหลายรายการพร้อมกัน
+  // ใช้คำตอบจาก server ถ้ามี (แม่นยำกว่าเพราะข้ามรหัสที่ถูกใช้ไปแล้วจริง)
+  // ถ้ายังไม่ได้คำตอบ ค่อยคำนวณคร่าวๆ ฝั่ง client ไปก่อน จะได้ไม่กระพริบเป็นช่องว่าง
   const codePreview = useMemo(() => {
     const qty = Math.max(1, Math.min(50, Number(quantity) || 1));
     if (!formData.assetCode.trim() || qty < 2) return '';
-    const codes = generateAssetCodes(formData.assetCode, qty, new Set());
+    const codes = codeCheck?.suggestedCodes?.length === qty
+      ? codeCheck.suggestedCodes
+      : generateAssetCodes(formData.assetCode, qty, new Set());
     return codes.length <= 3
       ? codes.join(', ')
       : `${codes[0]}, ${codes[1]} ... ${codes[codes.length - 1]}`;
-  }, [formData.assetCode, quantity]);
+  }, [formData.assetCode, quantity, codeCheck]);
 
   // 🌟 [paging] คำนวณช่วงข้อมูลของหน้าปัจจุบัน
   const totalItems = assets.length;
@@ -422,6 +472,24 @@ function AssetRegister() {
       return;
     }
 
+    // 🌟 [dup_warn] รหัสซ้ำ: ต้องยืนยันก่อน ห้ามบันทึกผ่านไปเงียบๆ
+    //
+    // ⚠️ ที่ต้องมีตรงนี้เพราะ server จะข้ามไปรหัสว่างถัดไปให้อัตโนมัติ (ไม่ error)
+    // ถ้าปล่อยผ่าน คนกรอกจะได้รหัสที่ไม่ได้ตั้งใจโดยไม่รู้ตัว
+    // โดยเฉพาะซ้ำในบริษัทตัวเอง ซึ่งมักแปลว่ากำลังจะสร้างทรัพย์สินตัวเดิมซ้ำอีกรอบ
+    if (modalMode === 'CREATE' && codeCheck?.taken) {
+      const actual = codeCheck.suggestedCodes[0] || formData.assetCode;
+      const where = codeCheck.scope === 'SAME_COMPANY' ? 'ในบริษัทนี้' : 'โดยบริษัทในเครือ';
+      const withWhat = codeCheck.conflict
+        ? `\nซ้ำกับ: ${codeCheck.conflict.assetCode} — ${codeCheck.conflict.description}`
+        : '';
+      const ok = confirm(
+        `รหัส "${formData.assetCode}" ถูกใช้${where}แล้ว${withWhat}\n\n` +
+        `ถ้าบันทึกต่อ ระบบจะเปลี่ยนรหัสให้เป็น "${actual}" แทน\n\nต้องการบันทึกต่อหรือไม่?`,
+      );
+      if (!ok) return;
+    }
+
     setIsSaving(true);
 
     const url = modalMode === 'EDIT' ? `/api/assets/${editingId}` : '/api/assets';
@@ -450,11 +518,13 @@ function AssetRegister() {
 
       if (res.ok) {
         const data = await res.json().catch(() => ({}));
+        // 🌟 [dup_warn] รหัสถูกระบบเปลี่ยนให้ = ต้องสะดุดตา ไม่ใช่เขียวผ่านไปเหมือนเคสปกติ
+        // (ผู้ใช้ต้องรู้ให้ได้ก่อนเอารหัสไปทำป้ายทรัพย์สิน)
         showToast(
           modalMode === 'EDIT'
             ? 'อัปเดตทรัพย์สินสำเร็จ!'
             : data.message || 'บันทึกทรัพย์สินสำเร็จ!',
-          'success',
+          modalMode !== 'EDIT' && data.codeChanged ? 'info' : 'success',
         );
         setIsModalOpen(false);
         fetchAll();
@@ -791,25 +861,10 @@ function AssetRegister() {
                   </div>
                 );
               })()}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="mb-1.5 block text-sm font-bold text-slate-700">รหัสทรัพย์สิน <span className="text-red-500">*</span></label>
-                  <input type="text" required placeholder="เช่น A-20260906-0001" value={formData.assetCode} onChange={e => setFormData({ ...formData, assetCode: e.target.value })} disabled={modalMode === 'PREVIEW'} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:ring-blue-50 focus:border-blue-500 disabled:bg-slate-200 disabled:text-slate-500" />
-                  {modalMode === 'CREATE' && (
-                    <p className="mt-1 text-xs text-slate-400">ระบบเติมให้อัตโนมัติ รูปแบบ <span className="font-mono font-semibold">รหัสประเภท-วันที่-เลขรัน</span> — แก้เองได้</p>
-                  )}
-                </div>
-                <div>
-                  <label className="mb-1.5 block text-sm font-bold text-slate-700">ประเภททรัพย์สิน <span className="text-red-500">*</span></label>
-                  <select required value={formData.categoryId} onChange={e => setFormData({ ...formData, categoryId: e.target.value })} disabled={modalMode === 'PREVIEW'} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:ring-blue-50 focus:border-blue-500 disabled:bg-slate-200 disabled:text-slate-500">
-                    <option value="">
-                      {!formData.companyId ? '-- เลือกบริษัทก่อน --' : isLoadingFormCategories ? 'กำลังโหลด...' : '-- เลือกประเภท --'}
-                    </option>
-                    {formCategories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                </div>
-              </div>
-
+              {/* 🌟 [form_order] บริษัทต้องมาก่อนเสมอ และกินเต็มบรรทัด
+                  เพราะทุกช่องข้างล่างขึ้นกับบริษัทที่เลือก — ประเภททรัพย์สินโหลดตามบริษัท
+                  และรหัสทรัพย์สินก็มาจากประเภทอีกที ถ้าวางไว้กลางฟอร์มผู้ใช้จะกรอกจากบนลงล่าง
+                  แล้วไปเจอ "เลือกบริษัทก่อน" ตั้งแต่ช่องที่สอง ต้องย้อนกลับขึ้นไป */}
               <div>
                 <label className="mb-1.5 block text-sm font-bold text-slate-700">บริษัท <span className="text-red-500">*</span></label>
                 {/* 🌟 [per_company] ย้ายบริษัทแล้วต้องล้างประเภทที่เลือกไว้
@@ -839,6 +894,81 @@ function AssetRegister() {
                     </p>
                   )
                 )}
+              </div>
+
+              {/* 🌟 [form_order] ประเภทอยู่ซ้าย รหัสอยู่ขวา — ไล่ตามลำดับที่ข้อมูลไหลจริง
+                  (เลือกประเภท -> ระบบเติมรหัสให้) เดิมรหัสอยู่ซ้ายทั้งที่เป็นผลลัพธ์ของช่องขวา */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="mb-1.5 block text-sm font-bold text-slate-700">ประเภททรัพย์สิน <span className="text-red-500">*</span></label>
+                  <select required value={formData.categoryId} onChange={e => setFormData({ ...formData, categoryId: e.target.value })} disabled={modalMode === 'PREVIEW' || !formData.companyId} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:ring-blue-50 focus:border-blue-500 disabled:bg-slate-200 disabled:text-slate-500">
+                    <option value="">
+                      {!formData.companyId ? '-- เลือกบริษัทก่อน --' : isLoadingFormCategories ? 'กำลังโหลด...' : '-- เลือกประเภท --'}
+                    </option>
+                    {formCategories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1.5 flex items-center gap-1 text-sm font-bold text-slate-700">
+                    รหัสทรัพย์สิน <span className="text-red-500">*</span>
+                    {modalMode === 'EDIT' && (
+                      <span className="ml-1 flex items-center gap-0.5 rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] font-bold text-slate-500">
+                        <BiLockAlt className="text-xs" /> แก้ไขไม่ได้
+                      </span>
+                    )}
+                  </label>
+                  {/* 🔒 [asset_code] โหมดแก้ไขล็อกรหัสไว้ — รหัสถูกพิมพ์ติดบนตัวทรัพย์สินจริง
+                      และอ้างอิงในเอกสารบัญชีไปแล้ว แก้ทีหลังจะทำให้ของจริงกับในระบบไม่ตรงกัน
+                      (API กันซ้ำอีกชั้น ไม่ได้พึ่งแค่ disabled ตรงนี้) */}
+                  <input type="text" required placeholder="เช่น A-20260906-0001" value={formData.assetCode} onChange={e => setFormData({ ...formData, assetCode: e.target.value })} disabled={modalMode !== 'CREATE'} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:ring-blue-50 focus:border-blue-500 disabled:bg-slate-200 disabled:text-slate-500 disabled:cursor-not-allowed" />
+                  {/* 🌟 [dup_warn] เตือนรหัสซ้ำตั้งแต่ตอนพิมพ์
+                      ⚠️ สำคัญเพราะตอนกดบันทึก ระบบจะ "ข้ามไปรหัสว่างถัดไปให้เงียบๆ"
+                      ถ้าไม่เตือนตรงนี้ คนกรอกจะเชื่อว่าได้รหัสตามที่พิมพ์ แล้วเอาไปทำป้าย/เอกสารผิดตัว */}
+                  {modalMode === 'CREATE' && codeCheck?.taken && (
+                    <div className={`mt-2 rounded-xl border p-3 text-xs animate-in fade-in ${
+                      codeCheck.scope === 'SAME_COMPANY'
+                        ? 'border-red-300 bg-red-50 text-red-700'
+                        : 'border-amber-300 bg-amber-50 text-amber-800'
+                    }`}>
+                      <p className="flex items-start gap-1.5 font-bold">
+                        <BiErrorCircle className="mt-0.5 shrink-0 text-sm" />
+                        {codeCheck.scope === 'SAME_COMPANY' && 'รหัสนี้ถูกใช้ในบริษัทนี้แล้ว'}
+                        {codeCheck.scope === 'GROUP' && 'รหัสนี้ถูกใช้โดยบริษัทในเครือแล้ว'}
+                      </p>
+                      {/* บริษัทที่ผู้ใช้ไม่มีสิทธิ์เห็น จะไม่มี conflict ส่งกลับมา — บอกได้แค่ว่าซ้ำ */}
+                      {codeCheck.conflict ? (
+                        <p className="mt-1.5 pl-5">
+                          ซ้ำกับ <span className="font-mono font-bold">{codeCheck.conflict.assetCode}</span>
+                          {' '}— {codeCheck.conflict.description}
+                          {codeCheck.conflict.companyName && <> ({codeCheck.conflict.companyName})</>}
+                        </p>
+                      ) : (
+                        <p className="mt-1.5 pl-5 opacity-80">รหัสห้ามซ้ำภายในเครือบริษัท รหัสนี้เป็นของบริษัทในเครือที่คุณไม่มีสิทธิ์เข้าถึง</p>
+                      )}
+                      {codeCheck.suggestedCodes[0] && (
+                        <p className="mt-2 pl-5">
+                          ถ้ากดบันทึกต่อ ระบบจะเปลี่ยนให้เป็น{' '}
+                          <button
+                            type="button"
+                            onClick={() => setFormData({ ...formData, assetCode: codeCheck.suggestedCodes[0] })}
+                            className="rounded-md bg-white/70 px-1.5 py-0.5 font-mono font-bold underline decoration-dotted hover:bg-white"
+                          >{codeCheck.suggestedCodes[0]}</button>
+                          {' '}— กดเพื่อใช้รหัสนี้
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {modalMode === 'CREATE' && !codeCheck?.taken && (
+                    <p className="mt-1 text-xs text-slate-400">
+                      ระบบเติมให้อัตโนมัติ รูปแบบ <span className="font-mono font-semibold">รหัสประเภท-วันที่-เลขรัน</span> — แก้เองได้
+                      {isCheckingCode && <span className="ml-1 text-slate-300">· กำลังตรวจรหัสซ้ำ...</span>}
+                      {!isCheckingCode && codeCheck && <span className="ml-1 font-semibold text-emerald-600">· รหัสนี้ยังว่างในเครือบริษัทนี้</span>}
+                    </p>
+                  )}
+                  {modalMode === 'EDIT' && (
+                    <p className="mt-1 text-xs text-slate-400">รหัสถูกอ้างอิงในเอกสารและป้ายทรัพย์สินแล้ว จึงแก้ไม่ได้</p>
+                  )}
+                </div>
               </div>
 
               <div>

@@ -8,6 +8,7 @@ import { NextResponse, NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { guard } from "@/lib/apiGuard";
 import { getAssetCompanyIds, isAssetCompanyAllowed, explainAssetAccessDenied } from "@/lib/assetScope";
+import { getGroupRootId, findCodeCollisionsOnMove, resyncAssetGroupRoots } from "@/lib/companyGroup";
 import { validateParent } from "../route";
 
 /** เช็คสิทธิ์กับบริษัทหนึ่ง — คืน response ถ้าไม่ผ่าน, null ถ้าผ่าน */
@@ -69,6 +70,33 @@ export async function PUT(
       }
     }
 
+    // 🌟 [group_dup] ย้ายบริษัทเข้า/ออกจากเครือ = ทรัพย์สินทั้งหมดของบริษัทนี้ย้ายทะเบียนตาม
+    //
+    // รหัสทรัพย์สินห้ามซ้ำภายในเครือ ดังนั้นการย้ายเครืออาจทำให้รหัสที่เคยอยู่กันคนละเครือ
+    // (ซึ่งถูกต้องตามกติกา) มาชนกันทันที ต้องเช็คก่อนบันทึก แล้วบอกให้ชัดว่ารหัสไหนชน
+    // ถ้าปล่อยผ่าน DB จะเด้ง unique constraint ดิบๆ ผู้ใช้จะไม่รู้เลยว่าต้องไปแก้ตัวไหน
+    //
+    // หมายเหตุ: บริษัทที่มีลูกถูกบล็อกไม่ให้ย้ายไปแล้วข้างบน ชุดที่ย้ายจึงมีแค่บริษัทนี้ตัวเดียว
+    const current = await prisma.company.findUnique({ where: { id }, select: { parentId: true } });
+    const parentChanged = (current?.parentId ?? null) !== parentId;
+
+    if (parentChanged) {
+      const newGroupRootId = parentId ? await getGroupRootId(parentId) : id;
+      const collisions = await findCodeCollisionsOnMove([id], newGroupRootId);
+      if (collisions.length > 0) {
+        const shown = collisions.slice(0, 5).join(", ");
+        const more = collisions.length > 5 ? ` และอีก ${collisions.length - 5} รหัส` : "";
+        return NextResponse.json(
+          {
+            error:
+              `ย้ายเครือบริษัทไม่ได้ เพราะรหัสทรัพย์สินจะซ้ำกับบริษัทในเครือปลายทาง: ${shown}${more}` +
+              " — รหัสทรัพย์สินแก้ไม่ได้ ต้องลบหรือย้ายทรัพย์สินที่ชนออกก่อน",
+          },
+          { status: 400 },
+        );
+      }
+    }
+
     const updated = await prisma.company.update({
       where: { id },
       data: {
@@ -80,6 +108,12 @@ export async function PUT(
         preparedBy: (token.name as string) || (token as any).username || "SYSTEM",
       },
     });
+
+    // 🌟 [group_dup] groupRootId เป็นค่า derived — ต้องซิงก์หลังบันทึกโครงสร้างใหม่แล้ว
+    // ไม่งั้นทรัพย์สินจะยังถูกบังคับ unique ด้วยเครือเก่า
+    if (parentChanged) {
+      await resyncAssetGroupRoots([id]);
+    }
 
     return NextResponse.json({ message: "อัปเดตสำเร็จ!", data: updated }, { status: 200 });
   } catch (error: any) {

@@ -18,6 +18,7 @@ import { guard } from "@/lib/apiGuard";
 import { getToken } from "next-auth/jwt";
 import { getAssetCompanyIds, isAssetCompanyAllowed } from "@/lib/assetScope";
 import { bangkokDateStamp } from "@/lib/datetime";
+import { getGroupRootId, findGroupAssetsByCodePrefix } from "@/lib/companyGroup";
 
 const RUNNING_WIDTH = 4; // 0001
 
@@ -57,12 +58,16 @@ export async function GET(request: NextRequest) {
     // ระหว่างที่ผู้ใช้ยังกรอกฟอร์มไม่เสร็จ และอาจเผลอบันทึกรหัสที่ไม่ได้ตั้งใจ
     const base = `${prefix}-${bangkokDateStamp()}-`;
 
-    // ⚠️ ค้นทั้งระบบไม่ใช่แค่บริษัทนี้ เพราะ Asset.assetCode เป็น unique ทั้งตาราง
-    // ถ้าดูเฉพาะบริษัทตัวเองจะเสนอรหัสที่บริษัทอื่นใช้ไปแล้ว
-    const existing = await prisma.asset.findMany({
-      where: { assetCode: { startsWith: base } },
-      select: { assetCode: true },
-    });
+    // 🌟 [group_dup] ค้นเฉพาะ "ในเครือ" ของบริษัทนี้ เพราะรหัสห้ามซ้ำแค่ในเครือ
+    // ข้ามเครือซ้ำได้ ถือว่าเป็นคนละทะเบียนทรัพย์สิน
+    // (เดิมค้นทั้งตาราง ทำให้รหัสของบริษัทที่ไม่เกี่ยวกันเลยมาดันเลขรันของเราให้กระโดด)
+    //
+    // ⚠️ ต้องครอบทั้งเครือ ไม่ใช่แค่บริษัทเดียว ไม่งั้นบริษัทแม่กับบริษัทลูกจะเสนอเลขเดียวกัน
+    // แล้วไปชน unique constraint ตอนกดบันทึก
+    const groupRootId = await getGroupRootId(category.companyId);
+    const existing = (await findGroupAssetsByCodePrefix(groupRootId, base)).map(
+      (assetCode) => ({ assetCode }),
+    );
 
     // หาเลขสูงสุดของวันนี้แล้วรันต่อ
     // (ไม่ใช้ "ช่องว่างแรกที่เจอ" เพราะรหัสที่เคยลบทิ้งไปแล้วไม่ควรถูกนำกลับมาใช้ซ้ำ

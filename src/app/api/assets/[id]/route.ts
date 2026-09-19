@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { getToken } from "next-auth/jwt";
 import { getAssetCompanyIds, isAssetCompanyAllowed, explainAssetAccessDenied } from "@/lib/assetScope";
 import { validateOpeningBalance, resolveOpeningBalance } from "@/lib/assetValidation";
+import { getGroupRootId } from "@/lib/companyGroup";
 
 /**
  * เช็คสิทธิ์กับทรัพย์สินชิ้นหนึ่ง — คืน error response ถ้าไม่ผ่าน, คืน null ถ้าผ่าน
@@ -99,6 +100,20 @@ export async function PUT(
     const before = await prisma.asset.findUnique({ where: { id } });
     if (!before) return NextResponse.json({ error: "ไม่พบทรัพย์สินนี้" }, { status: 404 });
 
+    // 🔒 [asset_code] รหัสทรัพย์สินแก้ไม่ได้หลังสร้างแล้ว
+    //
+    // เหตุผล: รหัสนี้ถูกพิมพ์ติดไว้บนตัวทรัพย์สินจริง (สติกเกอร์/ป้าย) และถูกอ้างอิง
+    // ในเอกสารบัญชี ใบตรวจนับ และไฟล์ที่ export ออกไปแล้ว การแก้ทีหลังทำให้ของจริง
+    // กับในระบบไม่ตรงกันโดยไม่มีร่องรอย ตามย้อนหลังไม่ได้ว่าเคยเป็นรหัสอะไร
+    //
+    // ⚠️ ต้องกันที่ API ด้วย ไม่ใช่แค่ disable ช่องกรอก เพราะยิง API ตรงๆ ข้าม UI ได้
+    if (assetCode !== undefined && String(assetCode).trim() !== before.assetCode) {
+      return NextResponse.json(
+        { error: "แก้ไขรหัสทรัพย์สินไม่ได้ เพราะถูกอ้างอิงในเอกสารและป้ายทรัพย์สินแล้ว" },
+        { status: 400 },
+      );
+    }
+
     // 🔒 [per_company] ประเภทต้องเป็นของบริษัทปลายทาง (บริษัทใหม่ถ้าย้าย ไม่งั้นบริษัทเดิม)
     // เช็คทุกครั้งที่มีการส่ง categoryId หรือ companyId มา เพราะย้ายบริษัทอย่างเดียว
     // ก็ทำให้ประเภทเดิมกลายเป็นของคนละบริษัททันที
@@ -111,6 +126,35 @@ export async function PUT(
           { error: "ประเภททรัพย์สินที่เลือกไม่ได้อยู่ในบริษัทนี้ กรุณาเลือกประเภทใหม่" },
           { status: 400 },
         );
+      }
+    }
+
+    // 🌟 [group_dup] ย้ายทรัพย์สินข้ามบริษัท = อาจย้ายข้ามเครือด้วย ต้องคำนวณต้นเครือใหม่
+    //
+    // ⚠️ ถ้าไม่ทำ groupRootId จะค้างเป็นของเครือเดิม แล้ว unique constraint จะบังคับผิดเครือ
+    // (ปล่อยให้รหัสซ้ำในเครือใหม่ได้ ทั้งที่ควรกัน และไปกันรหัสในเครือเก่าที่ไม่เกี่ยวแล้ว)
+    //
+    // ⚠️ ต้องเช็คด้วยว่ารหัสเดิมไปชนกับของเครือใหม่หรือไม่ — รหัสแก้ไม่ได้ ย้ายแล้วชนจึงแก้ไม่ตก
+    // ต้องบอกให้ชัดตั้งแต่ตอนนี้ว่าย้ายไม่ได้ แทนที่จะปล่อยให้ DB เด้ง unique ดิบๆ
+    let nextGroupRootId: number | undefined;
+    if (companyId !== undefined && Number(companyId) !== before.companyId) {
+      nextGroupRootId = await getGroupRootId(Number(companyId));
+      if (nextGroupRootId !== before.groupRootId) {
+        const clash = await prisma.asset.findFirst({
+          where: { groupRootId: nextGroupRootId, assetCode: before.assetCode, id: { not: id } },
+          select: { company: { select: { companyName: true } } },
+        });
+        if (clash) {
+          return NextResponse.json(
+            {
+              error:
+                `ย้ายไม่ได้ เพราะรหัส "${before.assetCode}" ถูกใช้อยู่แล้วในเครือบริษัทปลายทาง` +
+                (clash.company ? ` (${clash.company.companyName})` : "") +
+                " — รหัสทรัพย์สินแก้ไม่ได้ จึงต้องแก้ที่ปลายทางก่อน",
+            },
+            { status: 400 },
+          );
+        }
       }
     }
 
@@ -170,8 +214,9 @@ export async function PUT(
     const updated = await prisma.asset.update({
       where: { id },
       data: {
-        assetCode: assetCode ? String(assetCode).trim() : undefined,
+        // assetCode ไม่อยู่ใน data โดยตั้งใจ — ล็อกไว้ไม่ให้แก้ (ดูเหตุผลด้านบน)
         companyId: companyId ? Number(companyId) : undefined,
+        groupRootId: nextGroupRootId, // 🌟 [group_dup] undefined = ไม่ได้ย้ายบริษัท ปล่อยค่าเดิม
         categoryId: categoryId ? Number(categoryId) : undefined,
         description,
         location: location || null,

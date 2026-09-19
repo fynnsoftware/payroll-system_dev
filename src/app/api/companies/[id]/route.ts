@@ -5,6 +5,7 @@ import { createClient } from "@supabase/supabase-js"; // 🌟 นำเข้า
 import { getToken } from "next-auth/jwt";
 import { parseModuleCodes, syncCompanyModules } from "@/lib/companyModules";
 import { bangkokTimestamp } from "@/lib/datetime";
+import { getGroupRootId, findCodeCollisionsOnMove, resyncAssetGroupRoots } from "@/lib/companyGroup";
 
 // สร้างตัวแทน (Client) สำหรับคุยกับ Supabase
 const supabase = createClient(
@@ -100,6 +101,37 @@ export async function PUT(
       newLogoUrl = publicUrlData.publicUrl;
     }
 
+    // 🌟 [group_dup] ย้ายเครือบริษัท = ทรัพย์สินของบริษัทนี้ย้ายทะเบียนรหัสตามไปด้วย
+    //
+    // รหัสทรัพย์สินห้ามซ้ำภายในเครือ (unique ที่ groupRootId + assetCode) การย้ายเครือ
+    // จึงอาจทำให้รหัสที่เคยอยู่คนละเครือโดยชอบธรรม มาชนกันทันที
+    // ต้องเช็คก่อนบันทึกแล้วบอกว่ารหัสไหนชน ไม่ปล่อยให้ DB เด้ง unique ดิบๆ
+    //
+    // ⚠️ หน้านี้ (Company Management ฝั่ง payroll) เป็นอีกทางที่แก้ parentId ได้
+    // นอกจาก /api/asset-companies/[id] — ต้องอุดทั้งสองทาง ไม่งั้น groupRootId จะเพี้ยน
+    const currentCompany = await prisma.company.findUnique({
+      where: { id },
+      select: { parentId: true },
+    });
+    const parentChanged = (currentCompany?.parentId ?? null) !== parsedParentId;
+
+    if (parentChanged) {
+      const newGroupRootId = parsedParentId ? await getGroupRootId(parsedParentId) : id;
+      const collisions = await findCodeCollisionsOnMove([id], newGroupRootId);
+      if (collisions.length > 0) {
+        const shown = collisions.slice(0, 5).join(", ");
+        const more = collisions.length > 5 ? ` และอีก ${collisions.length - 5} รหัส` : "";
+        return NextResponse.json(
+          {
+            error:
+              `ย้ายเครือบริษัทไม่ได้ เพราะรหัสทรัพย์สินจะซ้ำกับบริษัทในเครือปลายทาง: ${shown}${more}` +
+              " — รหัสทรัพย์สินแก้ไม่ได้ ต้องลบหรือย้ายทรัพย์สินที่ชนออกก่อน",
+          },
+          { status: 400 },
+        );
+      }
+    }
+
     // อัปเดตลง Database
     const updatedCompany = await prisma.company.update({
       where: { id },
@@ -113,6 +145,11 @@ export async function PUT(
         preparedBy,
       },
     });
+
+    // 🌟 [group_dup] groupRootId เป็นค่า derived — ซิงก์หลังโครงสร้างใหม่ถูกบันทึกแล้ว
+    if (parentChanged) {
+      await resyncAssetGroupRoots([id]);
+    }
 
     await syncCompanyModules(id, moduleCodes);
 
